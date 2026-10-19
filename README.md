@@ -1,25 +1,38 @@
-# 💊 VDC Store — Pharmacy Management System
+# 💊 My Pharmacist — Pharmacy Management System
 
-> A full-stack web application designed for **VDC Store Pharmacy**, featuring a dedicated **customer-side medicine searching and real-time availability verification portal**, backed by a normalized **MySQL 8.0+** relational database and a separate protected **staff/admin inventory management module**.
+> A comprehensive full-stack web application designed for **My Pharmacist Dispensary**, featuring a dedicated **customer-side medicine searching and real-time availability verification portal** (with in-store inquiry slip printing), backed by a normalized **MySQL 8.0+** relational database, and an advanced **staff POS counter, batch tracking, multi-view analytics, trigger audit trail, and RBAC user management system**.
 
 ---
 
 ## 📌 Project Overview & Purpose
 
-The customer-facing website is designed **strictly for medicine catalog browsing and stock checking**. In compliance with retail pharmacy safety requirements:
-- Customers **cannot** purchase medicines, place orders, upload prescriptions, or add items to an online cart through the website.
-- Medicines are dispensed exclusively at the physical pharmacy counter upon verification by licensed pharmacists.
-- Availability calculations are recomputed live from MySQL inventory batches, automatically excluding expired batches (`expiry_date <= CURDATE()`) and recalled/inactive lots.
-- Authorized pharmacy staff and administrators manage medicine formulations, suppliers, lots, and stock movements through a separate, role-protected interface.
+### 1. Customer Public Experience
+The customer-facing website is designed **strictly for medicine catalog browsing, clinical details verification, and stock checking**:
+- Customers **cannot** execute online purchases or online credit card checkout (in full accordance with pharmacy regulations).
+- Real-time availability calculations are recomputed live from MySQL inventory batches, automatically excluding expired batches (`expiry_date <= CURDATE()`) and recalled/inactive lots.
+- Customers can build a shopping list of needed medications and generate a professional **Printable In-Store Inquiry Slip** to bring to the physical pharmacy counter.
+- Sensitive internal data (wholesale cost prices, batch numbers, internal supplier logistics) are completely withheld from public endpoints.
+
+### 2. Staff Dispensary & Management Experience
+Authorized pharmacy staff (Pharmacists, Cashiers, Admins) log in through a protected JWT portal to access:
+- **POS Dispense Counter**: Multi-unit packaging calculator (strips/cards, loose tablets, blister packs, vials, bottles, inhalers), automated invoice generation, atomic stock deduction with row-level pessimistic locking (`FOR UPDATE`), and 80mm thermal receipt printing.
+- **Formulary Medicine Master**: Comprehensive formulation directory with live stock badges, reorder thresholds, and formulation editing.
+- **Granular Batch & Expiry Tracker**: Lot number registry with manufacturing & expiry dates, usability status badges, days-to-expiry counters, and stock adjustment with mandatory audit reasons.
+- **Reports & DBMS Intelligence**:
+  - Daily & Monthly Sales Summaries (`v_daily_sales`, `v_monthly_sales`).
+  - Top Dispensed Medications (`v_sales_by_medicine`).
+  - Total Inventory Valuation (wholesale cost vs retail value potential).
+  - Database Trigger Audit Trail (`audit_logs`) tracking stock modifications in real time via `trg_after_batch_stock_update` with parsed snapshot badges.
+- **Staff Accounts & RBAC (Admin Only)**: Staff account creation with bcrypt password hashing, and active/inactive status toggle.
 
 ---
 
 ## 🛠️ Technology Stack
 
-- **Frontend:** React 19, Vite, Tailwind CSS, Axios, Lucide React (JavaScript only, no TypeScript)
-- **Backend:** Node.js, Express.js (ES Modules), JWT Authentication, Bcrypt (JavaScript only)
-- **Database:** MySQL 8.0+ (Raw parameterized SQL via `mysql2/promise`, Stored Procedures, Views, Triggers, Functions — No ORM)
-- **Architecture:** Client-Server REST API separated into `frontend/`, `backend/`, and `database/`
+- **Frontend:** React 19, Vite, Tailwind CSS v4, Axios, Lucide React (JavaScript JSX only, no TypeScript).
+- **Backend:** Node.js, Express.js (ES Modules), JWT Authentication, Bcrypt (JavaScript only).
+- **Database:** MySQL 8.0+ (Raw parameterized SQL via `mysql2/promise`, Stored Procedures, Views, Triggers, Functions — No ORM).
+- **Architecture:** Client-Server REST API separated into `frontend/`, `backend/`, and `database/`.
 
 ---
 
@@ -29,12 +42,13 @@ The customer-facing website is designed **strictly for medicine catalog browsing
 pharmacy-management-system/
 ├── frontend/                     # React + Vite + Tailwind CSS customer & staff UI
 │   ├── src/
-│   │   ├── components/           # Navbar, Footer, MedicineCard, DetailModal, AvailabilityBadge
+│   │   ├── components/           # Navbar, Footer, MedicineCard, DetailModal, AvailabilityBadge, InquiryCartModal
 │   │   ├── pages/                # HomePage, MedicineSearchPage, AboutContactPage, StaffLoginPage, StaffDashboardPage
 │   │   ├── services/api.js       # Axios client module for customer & admin endpoints
+│   │   ├── context/              # ThemeContext (dark/light mode)
+│   │   ├── utils/                # Image helpers and formatting utilities
 │   │   ├── App.jsx               # Main client application router
-│   │   ├── index.css             # Tailwind design system
-│   │   └── main.jsx
+│   │   └── index.css             # Tailwind design system
 │   ├── package.json
 │   └── vite.config.js
 ├── backend/                      # Node.js Express API server
@@ -47,20 +61,21 @@ pharmacy-management-system/
 │   ├── package.json
 │   └── .env.example
 ├── database/                     # MySQL 8.0+ DDL, DML, and automation scripts
-│   ├── schema.sql                # 3NF relational schema (9 tables, constraints, indexes)
-│   ├── routines.sql              # Views, Stored Functions, Stored Procedures, Triggers
-│   ├── seed.sql                  # Comprehensive sample data (27 medicines, batches, suppliers, settings)
+│   ├── schema.sql                # Complete 3NF relational schema (15 tables)
+│   ├── routines.sql              # Stored Procedures (sp_create_pos_sale, etc.), Views, Triggers
+│   ├── seed.sql                  # Comprehensive sample data (medicines, batches, suppliers, sales, purchases)
+│   ├── migration_v2.sql          # Non-destructive MySQL migration script for existing databases
 │   └── setup.js                  # Automated migration and seed runner
 ├── docs/                         # ADBMS Coursework Documentation Deliverables
-│   ├── er_diagram.md             # Mermaid Entity-Relationship Diagram & Data Dictionary
+│   ├── er_diagram.md             # Mermaid 3NF Entity-Relationship Diagram & Table Specifications
 │   ├── api_documentation.md      # REST API endpoints, request/response specifications
-│   └── test_cases.md             # Test matrix (search, availability, expired-batch exclusion, RBAC)
+│   └── test_cases.md             # Complete test matrix (POS, DBMS trigger audit, RBAC, inquiry slip)
 └── README.md
 ```
 
 ---
 
-## 🚀 Quick Setup & Installation Guide
+## 🚀 Setup & Execution Guide
 
 ### 1. Prerequisites
 - **Node.js** (v18.0.0 or higher)
@@ -68,95 +83,70 @@ pharmacy-management-system/
 
 ---
 
-### 2. Database Setup
+### 2. Database Migration Options
 
-1. Make sure your MySQL server is running.
-2. Configure credentials in `backend/.env` (or copy from `backend/.env.example`):
+#### Option A: Non-Destructive Update (Recommended for existing data)
+Open **MySQL Workbench** or command-line client, connect to your MySQL server, and execute:
+```sql
+SOURCE c:/Users/tharu/Desktop/adbms/pharmacy-management-system/database/migration_v2.sql;
+```
+This script safely creates missing tables (`purchases`, `purchase_items`, `sales`, `sale_items`, `sale_item_batches`, `payments`), missing views (`v_daily_sales`, `v_monthly_sales`, `v_sales_by_medicine`, `v_payment_summary`), and the atomic POS sale stored procedure `sp_create_pos_sale` without dropping any of your existing records.
+
+#### Option B: Fresh Installation from Scratch
+To recreate the complete database with sample data:
+```bash
+cd backend
+node setup.js
+```
+
+---
+
+### 3. Backend Setup
+1. Configure credentials in `backend/.env`:
    ```ini
    PORT=5000
    DB_HOST=localhost
    DB_PORT=3306
    DB_USER=root
-   DB_PASSWORD=
+   DB_PASSWORD=your_password
    DB_NAME=pharmacy_db
-   JWT_SECRET=vdc_store_jwt_super_secret_key_2026_adbms
+   JWT_SECRET=supersecret_mypharmacist_jwt_key_2026
    ```
-3. Run the automated database installer:
+2. Start the backend server:
    ```bash
    cd backend
-   npm install
-   npm run db:setup
+   npm run dev
    ```
-   *Alternative manual setup via MySQL CLI:*
+   The backend API will run on `http://localhost:5000`.
+
+---
+
+### 4. Frontend Setup
+1. Start the Vite development server:
    ```bash
-   mysql -u root -p < database/schema.sql
-   mysql -u root -p pharmacy_db < database/routines.sql
-   mysql -u root -p pharmacy_db < database/seed.sql
+   cd frontend
+   npm run dev
    ```
+2. Open your browser and navigate to `http://localhost:3000`.
 
 ---
 
-### 3. Start the Backend API Server
+## 🔐 Staff Access & Role-Based Credentials
 
-```bash
-cd backend
-npm install
-npm run dev
-```
-The Express API will be running at `http://localhost:5000`. You can verify health at `http://localhost:5000/api/health`.
-
----
-
-### 4. Start the Frontend Client
-
-In a separate terminal:
-```bash
-cd frontend
-npm install
-npm run dev
-```
-The React customer application will launch at `http://localhost:3000`.
+| Role | Username / Identifier | Default Password | Permissions |
+|---|---|---|---|
+| **ADMIN** | `admin` (or `admin@mypharmacist.lk`) | `admin123` | Full access: POS, inventory, formulary edits, reports, trigger audit trail, user account management |
+| **PHARMACIST** | `pharmacist` | `pharmacist123` | POS counter, formulary view/adjust, batch register, inventory reports |
+| **CASHIER** | `cashier` | `cashier123` | POS counter, invoice receipt generation |
 
 ---
 
-## 👥 Demo Staff Credentials
+## 📋 Coursework Compliance Checklist
 
-For testing the protected Staff and Administrator management portal:
-
-| Role | Username / Email | Password |
-|---|---|---|
-| **Administrator** | `admin@vdcstore.com` | `admin123` |
-| **Pharmacist** | `pharmacist@vdcstore.com` | `pharma123` |
-
-*(A quick 1-click autofill button is provided on the Staff Login screen for convenience).*
-
----
-
-## 🎓 Advanced Database (ADBMS) Coursework Highlights
-
-- **Normalized 3NF Architecture:** Separated relations for `brands`, `medicine_categories`, `medicines`, `suppliers`, `medicine_batches`, `stock_movements`, `users`, `pharmacy_settings`, and `audit_logs`.
-- **Complex SQL Joins:** Multi-table `INNER JOIN` and `LEFT JOIN` queries combining medicine specifications, brand origins, category groupings, and batch availability.
-- **SQL Views:**
-  - `v_medicine_catalog`: Public view with calculated stock status.
-  - `v_medicine_availability`: Real-time stock summary with customer messages.
-  - `v_low_stock_alerts`: Internal staff view for items at or below reorder threshold.
-  - `v_expiring_batches`: Internal monitoring view for batches expiring within 90 days.
-- **Stored Functions:**
-  - `fn_calculate_available_stock(p_medicine_id)`: Calculates active unexpired stock.
-  - `fn_get_availability_status(p_medicine_id)`: Returns `'In Stock'`, `'Low Stock'`, or `'Out of Stock'`.
-- **Stored Procedures:**
-  - `sp_update_batch_stock`: Transactional pessimistic row locking (`FOR UPDATE`) with automatic stock movement logging.
-  - `sp_receive_new_batch`: Atomically receives batch and initializes movement record.
-  - `sp_get_inventory_summary`: Aggregates operational dashboard metrics.
-- **Triggers:**
-  - `trg_after_batch_stock_update`: Triggers on batch updates, writing JSON audit snapshots of old/new values to `audit_logs`.
-  - `trg_before_batch_insert`: Enforces business integrity: `expiry_date > manufacture_date` and `stock_quantity <= quantity_received`.
-- **Indexes:** Multi-column composite index on `(name, generic_name)` and `(medicine_id, status, expiry_date, stock_quantity)` for performant sub-second searches.
-
----
-
-## 📄 Documentation Deliverables
-
-- [API Documentation](file:///c:/Users/tharu/Desktop/adbms/pharmacy-management-system/docs/api_documentation.md)
-- [Entity-Relationship (ER) Diagram & Schema](file:///c:/Users/tharu/Desktop/adbms/pharmacy-management-system/docs/er_diagram.md)
-- [Test Cases & Validation Plan](file:///c:/Users/tharu/Desktop/adbms/pharmacy-management-system/docs/test_cases.md)
+- [x] **No TypeScript migration:** Pure JavaScript (JSX) on frontend, ES Modules on backend.
+- [x] **No customer online checkout / payment gateways:** Strict inquiry slip generator with print styling.
+- [x] **3NF Database Normalization:** 15 normalized tables, foreign keys with referential actions.
+- [x] **Atomic Transactions:** Row-level pessimistic locking (`FOR UPDATE`) in POS sales with rollback on stock shortage.
+- [x] **MySQL Stored Routines:** Stored procedures (`sp_create_pos_sale`, `sp_receive_new_batch`, `sp_update_batch_stock`, `sp_get_inventory_summary`), views, and functions.
+- [x] **Automated Trigger Auditing:** `trg_after_batch_stock_update` captures old and new states in `audit_logs`.
+- [x] **Security:** Bcrypt password hashing, JWT stateless authentication, role-based route guards.

@@ -1,116 +1,118 @@
-# VDC Store Pharmacy Management System — Test Cases & Validation Plan
+# My Pharmacist Pharmacy Management System — Comprehensive Test Plan & Test Cases
 
-This document details the functional and database validation test matrix for the **VDC Store Pharmacy Management System**, covering search algorithms, dynamic availability calculations, expired-batch exclusions, and RBAC authorization.
-
----
-
-## 1. Test Matrix Summary
-
-| Test Case ID | Test Category | Description | Expected Outcome | Status |
-|---|---|---|---|---|
-| **TC-01** | Medicine Search | Search by Trade/Brand Name (e.g. "Augmentin") | Returns Augmentin with associated brand and category details | PASSED |
-| **TC-02** | Medicine Search | Search by Generic Molecule (e.g. "Paracetamol") | Returns Panadol Extra and Panadol Drops | PASSED |
-| **TC-03** | Medicine Search | Search by Brand Name (e.g. "Pfizer") | Returns all medicines manufactured by Pfizer | PASSED |
-| **TC-04** | Filtering | Filter by Category (Antibiotics, Category ID 1) | Returns only antibacterial formulations | PASSED |
-| **TC-05** | Filtering | Filter by Availability = 'in_stock' | Returns only medicines where saleable stock > threshold | PASSED |
-| **TC-06** | Filtering | Filter by Availability = 'low_stock' | Returns medicines where 0 < saleable stock &le; threshold | PASSED |
-| **TC-07** | Filtering | Filter by Availability = 'out_of_stock' | Returns medicines with 0 saleable stock | PASSED |
-| **TC-08** | Stock Logic | Expired Batch Exclusion Test | Batches with `expiry_date &le; CURDATE()` are strictly ignored in stock sums | PASSED |
-| **TC-09** | Stock Logic | Recalled / Quarantined Batch Exclusion | Batches with `status = 'recalled'` are excluded from customer stock | PASSED |
-| **TC-10** | Availability | Real-time endpoint `/api/medicines/:id/availability` | Accurately returns In Stock, Low Stock, or Out of Stock status | PASSED |
-| **TC-11** | Sorting & Pagination | Alphabetical sorting (A-Z) and `LIMIT 9 OFFSET 0` | Results correctly sorted by name and paginated | PASSED |
-| **TC-12** | Security & RBAC | Customer boundary test (No Cart / Checkout) | Customer side contains zero purchasing or ordering options | PASSED |
-| **TC-13** | Security & RBAC | Unauthenticated request to `/api/admin/*` | Returns `401 Unauthorized` with error message | PASSED |
-| **TC-14** | Database Trigger | `trg_after_batch_stock_update` verification | Modifying batch stock automatically logs old/new quantities in `audit_logs` | PASSED |
-| **TC-15** | Stored Procedure | `sp_receive_new_batch` transaction | Validates dates, inserts batch, and logs movement atomically | PASSED |
+This document defines the formal test suites for validating the **My Pharmacist** application across all user roles, security boundaries, and database transaction guarantees.
 
 ---
 
-## 2. Detailed Test Specifications
+## Test Suite 1: Customer Public Portal & Inquiry System
 
-### Test Case TC-01: Search by Medicine Name
-- **Objective:** Verify that search queries correctly match trade/brand names.
-- **Request:**
-  ```http
-  GET /api/medicines?search=Augmentin
-  ```
-- **Validation Query:**
-  ```sql
-  SELECT m.name, m.generic_name, b.brand_name 
-  FROM medicines m 
-  JOIN brands b ON m.brand_id = b.brand_id
-  WHERE m.name LIKE '%Augmentin%';
-  ```
-- **Expected Result:** HTTP 200 with Augmentin 625mg in the results list.
-
----
-
-### Test Case TC-02: Search by Generic Molecule
-- **Objective:** Verify that customers can locate alternative brands by searching chemical generic names.
-- **Request:**
-  ```http
-  GET /api/medicines?search=Paracetamol
-  ```
-- **Expected Result:** HTTP 200 returning both "Panadol Extra" and "Panadol Children Drops".
-
----
-
-### Test Case TC-08: Expired Batch Exclusion Verification (Core DBMS Requirement)
-- **Objective:** Ensure expired batches are not counted towards saleable stock.
-- **Scenario in Seed Data:**
-  - Medicine ID 1 ("Augmentin 625mg") has 3 batches:
-    1. Batch 1 (`AUG-2025-01`): 80 units, expires `2027-06-30` (ACTIVE, UNEXPIRED)
-    2. Batch 2 (`AUG-2025-02`): 40 units, expires `2027-08-31` (ACTIVE, UNEXPIRED)
-    3. Batch 3 (`AUG-2023-EX`): 20 units, expired `2024-01-01` (EXPIRED)
-- **Calculation Rule:**
-  - Raw sum of all batches = 80 + 40 + 20 = 140 units.
-  - Required saleable stock (excluding expired) = 80 + 40 = **120 units**.
-- **Verification Query:**
-  ```sql
-  SELECT fn_calculate_available_stock(1) AS calculated_stock;
-  ```
-- **Result:** Value is **120**, confirming expired Batch 3 is excluded.
-
----
-
-### Test Case TC-09: Recalled Batch Exclusion Verification
-- **Objective:** Ensure batches with status other than `'active'` are excluded from customer availability.
-- **Scenario in Seed Data:**
-  - Medicine ID 4 ("Zithromax 250mg") has 2 batches:
-    1. Batch 6 (`ZIT-2024-04`): 0 units (DEPLETED)
-    2. Batch 7 (`ZIT-2025-RC`): 45 units with `status = 'recalled'`.
-- **Expected Availability Status:** **Out of Stock**.
-- **Customer Advice:** *"This medicine is currently out of stock. Please contact the pharmacy for further information."*
-- **Result:** Verified. Status is "Out of Stock" because the 45 units in Batch 7 are recalled and not saleable.
-
----
-
-### Test Case TC-13: Access Control & Security on Admin Endpoints
-- **Objective:** Ensure unauthenticated public users cannot alter inventory or read internal supplier data.
-- **Request:**
-  ```http
-  GET /api/admin/medicines
-  ```
-  *(Without Authorization Header)*
+### TC-01: Medicine Catalog Search with Multi-Word Keyword
+- **Precondition:** Database seeded with formulary items.
+- **Steps:**
+  1. Open Public Homepage (`/`).
+  2. Enter keyword "Augmentin" into the search bar and press Enter.
 - **Expected Result:**
-  ```json
-  {
-    "success": false,
-    "message": "Access denied. Authentication token missing."
-  }
-  ```
-- **Status Code:** `401 Unauthorized`.
+  - Navigates to `/search?q=Augmentin`.
+  - Only active, matching formulations are returned.
+  - Wholesale cost, supplier name, and internal batch numbers are completely hidden.
+
+### TC-02: Real-Time Availability Check Excludes Expired Stock
+- **Precondition:** A medicine exists with 50 units in an active batch and 100 units in an expired batch.
+- **Steps:**
+  1. View medicine card on the search page.
+  2. Inspect displayed saleable stock.
+- **Expected Result:**
+  - Displayed saleable stock is exactly 50 units.
+  - Availability badge displays "In Stock" (or "Low Stock" based on threshold).
+  - Expired batch stock is strictly omitted by MySQL subquery.
+
+### TC-03: In-Store Inquiry Slip Generation (No Online Checkout)
+- **Precondition:** Customer browsing search catalog.
+- **Steps:**
+  1. Click "+ Add to Inquiry" on 2 medicines.
+  2. Click the floating Inquiry Cart button.
+  3. Enter customer name and prescription note.
+  4. Click "Print Inquiry Slip".
+- **Expected Result:**
+  - Opens a clean, formatted in-store inquiry slip ready for printing.
+  - Shows disclaimer: *"This is an in-store reservation and availability inquiry slip, NOT an online payment invoice."*
+  - No payment gateway or credit card form is displayed.
 
 ---
 
-### Test Case TC-14: Automated Trigger Audit Logging
-- **Objective:** Verify MySQL trigger `trg_after_batch_stock_update` logs quantity changes into `audit_logs`.
-- **Action:**
-  ```sql
-  UPDATE medicine_batches SET stock_quantity = 75 WHERE batch_id = 1;
-  ```
-- **Verification Query:**
-  ```sql
-  SELECT * FROM audit_logs WHERE record_id = 1 ORDER BY timestamp DESC LIMIT 1;
-  ```
-- **Expected Result:** A new row in `audit_logs` containing `old_value` (80) and `new_value` (75).
+## Test Suite 2: Staff POS Dispensing & Atomic Transactions
+
+### TC-04: Atomic POS Sale Creation with Pessimistic Locking
+- **Precondition:** Staff user logged in. Lot #26 has 10 units in stock.
+- **Steps:**
+  1. Navigate to "POS Dispense Counter" tab.
+  2. Select medicine and lot #26.
+  3. Select packaging mode: "1 Card of 10 Tablets" (10 units).
+  4. Enter patient name "Nimal Silva" and Rx ref "RX-901".
+  5. Click "Complete Dispensation & Print Receipt".
+- **Expected Result:**
+  - Atomically locks batch row with `FOR UPDATE`.
+  - Inserts record into `sales`, `sale_items`, `sale_item_batches`, and `payments`.
+  - Decrements batch `stock_quantity` from 10 to 0.
+  - Updates lot status to `'depleted'`.
+  - Generates receipt with unique invoice # (e.g., `INV-20261018-0001`).
+
+### TC-05: Rollback on Insufficient Stock or Race Condition
+- **Precondition:** Lot #26 has 2 units in stock.
+- **Steps:**
+  1. Attempt to dispense 5 units from lot #26.
+- **Expected Result:**
+  - Frontend alerts "Insufficient stock".
+  - Backend transaction rolls back with SQL error `ERR_INSUFFICIENT_STOCK`.
+  - No partial records are inserted into `sales` or `sale_items`.
+
+---
+
+## Test Suite 3: DBMS Triggers & Audit Logging
+
+### TC-06: Automatic Stock Update Trigger Execution
+- **Precondition:** Staff adjusts batch stock quantity in "Batch & Expiry" tab.
+- **Steps:**
+  1. Click "Adjust Stock" on batch #29 (current stock: 75).
+  2. Change stock to 74 with reason "Dispensary count verification".
+  3. Submit form.
+  4. Navigate to "Reports & Analytics" &rarr; "Trigger Audit Trail".
+- **Expected Result:**
+  - MySQL trigger `trg_after_batch_stock_update` automatically inserts a record into `audit_logs`.
+  - Operation is logged as `UPDATE`.
+  - Old state is displayed as `Stock: 75 (active)`.
+  - New state is displayed as `Stock: 74 (active)`.
+  - Performed by shows the caller or trigger identifier.
+
+---
+
+## Test Suite 4: Role-Based Access Control (RBAC) & Security
+
+### TC-07: Pharmacist Restricted from Admin Tabs
+- **Precondition:** User logged in with `PHARMACIST` role.
+- **Steps:**
+  1. Inspect sidebar navigation.
+  2. Attempt to navigate to `activeTab === 'users'`.
+- **Expected Result:**
+  - "Staff Accounts" tab is hidden from sidebar.
+  - API calls to `/api/admin/users` return `403 Forbidden` (`Admin role required`).
+
+### TC-08: Admin Staff User Account Creation
+- **Precondition:** User logged in with `ADMIN` role.
+- **Steps:**
+  1. Navigate to "Staff Accounts" tab.
+  2. Click "+ Add Staff User".
+  3. Enter username, email, full name, role (`PHARMACIST`), and password.
+  4. Submit form.
+- **Expected Result:**
+  - Password is hashed with `bcrypt.hash(password, 10)` before storage.
+  - Plaintext password is never saved in MySQL.
+  - New user appears in the staff table with status "Active".
+
+### TC-09: User Account Deactivation
+- **Precondition:** Admin views active user in "Staff Accounts" tab.
+- **Steps:**
+  1. Click "Deactivate" button next to a user.
+- **Expected Result:**
+  - User status changes to `Inactive` (`is_active = FALSE`).
+  - Next login attempt by this user is rejected with `"Account has been deactivated"`.

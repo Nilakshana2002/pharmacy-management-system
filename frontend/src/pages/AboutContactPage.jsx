@@ -1,18 +1,36 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Building2, Phone, Mail, MapPin, Clock, ShieldCheck, 
-  Send, CheckCircle2, MessageSquare, AlertCircle, HeartHandshake
+  Send, CheckCircle2, MessageSquare, AlertCircle, HeartHandshake,
+  Stethoscope, Award, ThermometerSnowflake, FileCheck, Check
 } from 'lucide-react';
 import { getPublicSettings } from '../services/api';
+import { useTheme } from '../context/ThemeContext';
+import { PHARMACY_IMAGES } from '../utils/pharmacyImages';
 
-export default function AboutContactPage() {
+export default function AboutContactPage({ initialFocus = 'about' }) {
+  const { isDark } = useTheme();
   const [settings, setSettings] = useState({});
   const [formData, setFormData] = useState({ name: '', phone: '', medicineQuery: '', message: '' });
   const [submitted, setSubmitted] = useState(false);
+  const [inquiryRef, setInquiryRef] = useState('');
 
   useEffect(() => {
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    if (initialFocus === 'contact') {
+      const el = document.getElementById('contact-section');
+      if (el) {
+        setTimeout(() => {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          const nameInput = document.getElementById('contact-name-input');
+          if (nameInput) nameInput.focus();
+        }, 150);
+      }
+    }
+  }, [initialFocus]);
 
   const loadSettings = async () => {
     try {
@@ -27,11 +45,15 @@ export default function AboutContactPage() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    const refCode = 'INQ-' + Math.floor(100000 + Math.random() * 900000);
+    setInquiryRef(refCode);
     setSubmitted(true);
-    setTimeout(() => {
-      setSubmitted(false);
-      setFormData({ name: '', phone: '', medicineQuery: '', message: '' });
-    }, 4000);
+  };
+
+  const handleResetForm = () => {
+    setSubmitted(false);
+    setFormData({ name: '', phone: '', medicineQuery: '', message: '' });
+    setInquiryRef('');
   };
 
   return (
@@ -39,35 +61,57 @@ export default function AboutContactPage() {
       
       {/* Header Banner */}
       <div className="text-center max-w-3xl mx-auto space-y-4">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25">
-          <HeartHandshake className="w-4 h-4" />
-          <span>Patient-Centered Healthcare Information</span>
+        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold border bg-teal-50 dark:bg-teal-950/60 text-teal-800 dark:text-teal-300 border-teal-200 dark:border-teal-800">
+          <HeartHandshake className="w-4 h-4 text-teal-600" />
+          <span>Patient-Centered Healthcare & Quality Pharmaceutical Services</span>
         </div>
-        <h1 className="text-4xl sm:text-5xl font-extrabold text-white">
-          About VDC Store Pharmacy
+        <h1 className="text-3xl sm:text-5xl font-black text-slate-900 dark:text-white">
+          About My Pharmacist
         </h1>
-        <p className="text-sm sm:text-base text-slate-400 leading-relaxed">
-          VDC Store is an established retail pharmacy dedicated to pharmaceutical integrity, patient counseling, and accurate medicine availability tracking.
+        <p className="text-xs sm:text-base leading-relaxed text-slate-600 dark:text-slate-400">
+          My Pharmacist is a licensed modern healthcare and community pharmacy committed to verified medicine authenticity, pharmacist counseling, and temperature-controlled storage standards.
         </p>
       </div>
 
+      {/* Visual Healthcare Hero Showcase */}
+      <div className="relative rounded-3xl overflow-hidden shadow-xl border border-slate-200 dark:border-slate-800 aspect-[21/9] sm:aspect-[24/9] bg-slate-100 dark:bg-slate-800">
+        <img
+          src={PHARMACY_IMAGES.pharmacyStorefront}
+          alt="Modern Pharmacy Storefront and Dispensary"
+          className="w-full h-full object-cover object-center"
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-950/80 via-slate-950/40 to-transparent flex items-center">
+          <div className="p-6 sm:p-12 text-white max-w-lg space-y-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-teal-300">
+              Community Health Partner
+            </span>
+            <h3 className="text-xl sm:text-3xl font-extrabold leading-tight">
+              A Trusted Standard in Pharmaceutical Care
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+              Every day, our dedicated team of pharmacists dispenses registered therapeutics, reviews drug interactions, and ensures patient safety.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Grid: Details & Hours / Inquiry Form */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+      <div id="contact-section" className="grid grid-cols-1 lg:grid-cols-2 gap-10 pt-4 scroll-mt-28">
         
         {/* Left Column: Pharmacy Information & Operating Schedule */}
         <div className="space-y-6">
-          <div className="p-8 rounded-3xl bg-slate-900/60 border border-slate-800 space-y-6">
-            <h2 className="text-xl font-bold text-white flex items-center gap-2.5">
-              <Building2 className="w-5 h-5 text-emerald-400" />
-              Dispensary & Location Details
+          <div className="p-8 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-6">
+            <h2 className="text-xl font-bold flex items-center gap-2.5 text-slate-900 dark:text-white">
+              <Building2 className="w-5 h-5 text-teal-600" />
+              <span>Dispensary & Contact Details</span>
             </h2>
 
-            <div className="space-y-4 text-xs sm:text-sm text-slate-300">
+            <div className="space-y-5 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
               <div className="flex items-start gap-3">
-                <MapPin className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                <MapPin className="w-5 h-5 text-teal-600 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-bold text-white block">Physical Pharmacy Address:</span>
-                  <p className="text-slate-400 mt-0.5 leading-relaxed">
+                  <span className="font-bold block text-slate-900 dark:text-white">Physical Pharmacy Address:</span>
+                  <p className="mt-0.5 text-slate-600 dark:text-slate-400 leading-relaxed">
                     {settings.address_street || '124 Galle Road, Bambalapitiya'},<br />
                     {settings.address_city || 'Colombo 04, Sri Lanka'}
                   </p>
@@ -75,136 +119,164 @@ export default function AboutContactPage() {
               </div>
 
               <div className="flex items-start gap-3">
-                <Phone className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                <Phone className="w-5 h-5 text-teal-600 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-bold text-white block">Pharmacist Helplines:</span>
-                  <p className="text-slate-400 mt-0.5">
-                    Landline: {settings.phone_primary || '+94 11 234 5678'}<br />
-                    24/7 Stock Hotline: {settings.phone_hotline || '+94 77 123 4567'}
-                  </p>
+                  <span className="font-bold block text-slate-900 dark:text-white">Pharmacist Helplines:</span>
+                  <div className="mt-1 space-y-1 text-slate-600 dark:text-slate-400">
+                    <div>
+                      Dispensary Desk:{' '}
+                      <a href={`tel:${settings.phone_primary || '+94112345678'}`} className="font-bold text-teal-700 dark:text-teal-400 hover:underline">
+                        {settings.phone_primary || '+94 11 234 5678'}
+                      </a>
+                    </div>
+                    <div>
+                      24/7 Prescription Hotline:{' '}
+                      <a href={`tel:${settings.phone_hotline || '+94771234567'}`} className="font-bold text-teal-700 dark:text-teal-400 hover:underline">
+                        {settings.phone_hotline || '+94 77 123 4567'}
+                      </a>
+                    </div>
+                  </div>
                 </div>
               </div>
 
               <div className="flex items-start gap-3">
-                <Mail className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                <Mail className="w-5 h-5 text-teal-600 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-bold text-white block">Inquiries Email:</span>
-                  <p className="text-slate-400 mt-0.5">
-                    {settings.email || 'info@vdcstore.com'}
+                  <span className="font-bold block text-slate-900 dark:text-white">Official Dispensary Inquiries:</span>
+                  <p className="mt-1">
+                    <a href={`mailto:${settings.email || 'info@mypharmacist.com'}`} className="font-bold text-teal-700 dark:text-teal-400 hover:underline">
+                      {settings.email || 'info@mypharmacist.com'}
+                    </a>
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Operating Hours Box */}
-            <div className="pt-4 border-t border-slate-800">
-              <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-teal-400" />
-                Dispensary Counter Timetable
-              </h3>
-              <div className="space-y-2 text-xs">
-                <div className="flex justify-between py-1.5 px-3 rounded-lg bg-slate-950/60 border border-slate-800">
-                  <span className="text-slate-400">Monday – Friday</span>
-                  <span className="font-semibold text-emerald-400">{settings.hours_weekday || '8:00 AM – 10:00 PM'}</span>
+            {/* Operating Schedule */}
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+              <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Clock className="w-4 h-4 text-teal-600" />
+                <span>Operating Dispensary Hours</span>
+              </h4>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-100 dark:border-slate-800">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Weekdays (Mon - Fri)</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">8:00 AM – 10:00 PM</span>
                 </div>
-                <div className="flex justify-between py-1.5 px-3 rounded-lg bg-slate-950/60 border border-slate-800">
-                  <span className="text-slate-400">Saturday</span>
-                  <span className="font-semibold text-emerald-400">{settings.hours_saturday || '8:30 AM – 9:00 PM'}</span>
-                </div>
-                <div className="flex justify-between py-1.5 px-3 rounded-lg bg-slate-950/60 border border-slate-800">
-                  <span className="text-slate-400">Sunday & Public Holidays</span>
-                  <span className="font-semibold text-emerald-400">{settings.hours_sunday || '9:00 AM – 6:00 PM'}</span>
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-100 dark:border-slate-800">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Weekends & Holidays</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">8:30 AM – 9:00 PM</span>
                 </div>
               </div>
-            </div>
-
-            {/* In-Store Dispensation Reminder */}
-            <div className="p-4 rounded-2xl bg-emerald-950/20 border border-emerald-500/20 text-xs text-emerald-300 flex items-start gap-3">
-              <AlertCircle className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-              <span>
-                <strong>Dispensation Protocol:</strong> Prescription drugs strictly require a physical prescription issued by a registered medical practitioner. No medicines are shipped or delivered online.
-              </span>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Medicine Availability Inquiry Form */}
-        <div className="p-8 rounded-3xl bg-slate-900/60 border border-slate-800 space-y-6">
-          <div>
-            <span className="text-xs font-mono uppercase tracking-wider text-teal-400 font-semibold">Have a Question?</span>
-            <h2 className="text-xl font-bold text-white mt-1">Medicine Availability Inquiry</h2>
-            <p className="text-xs text-slate-400 mt-1">
-              Need to check on a specialized formulation or have questions for our pharmacists? Send an inquiry and our team will verify our stock.
-            </p>
-          </div>
-
-          {submitted ? (
-            <div className="p-6 rounded-2xl bg-emerald-950/30 border border-emerald-500/40 text-center space-y-3">
-              <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto" />
-              <h4 className="text-base font-bold text-white">Inquiry Received</h4>
-              <p className="text-xs text-slate-300">
-                Thank you! Our pharmacy team has logged your stock verification inquiry and will contact you via phone promptly during dispensary hours.
+        {/* Right Column: Direct Pharmacist Message / Inquiry Form */}
+        <div>
+          <div className="p-8 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-6">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-teal-600" />
+                <span>Inquire With a Pharmacist</span>
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Have a question regarding medication availability, dosage formulation, or storage? Send an inquiry directly to our dispensary staff.
               </p>
             </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Your Full Name</label>
-                <input
-                  type="text"
-                  required
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="e.g. Kasun Fernando"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                />
+
+            {submitted ? (
+              <div className="p-6 rounded-2xl bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 text-center space-y-3 animate-in zoom-in-95">
+                <CheckCircle2 className="w-12 h-12 text-teal-600 mx-auto" />
+                <div>
+                  <span className="inline-block px-3 py-1 rounded-full text-[11px] font-mono font-bold bg-teal-100 dark:bg-teal-900/60 text-teal-800 dark:text-teal-200 mb-2">
+                    Reference: {inquiryRef}
+                  </span>
+                  <h4 className="text-base font-bold text-teal-900 dark:text-teal-200">
+                    Inquiry Transmitted Successfully
+                  </h4>
+                </div>
+                <p className="text-xs text-teal-700 dark:text-teal-300 max-w-sm mx-auto leading-relaxed">
+                  Thank you, <strong>{formData.name}</strong>. Our dispensary team has received your query and will contact you at <strong>{formData.phone}</strong> shortly.
+                </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={handleResetForm}
+                    className="px-4 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs transition-colors cursor-pointer"
+                  >
+                    Send Another Inquiry
+                  </button>
+                </div>
               </div>
+            ) : (
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                    Your Full Name *
+                  </label>
+                  <input
+                    id="contact-name-input"
+                    type="text"
+                    required
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    placeholder="e.g. John Doe"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-teal-600"
+                  />
+                </div>
 
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Phone Number for Verification</label>
-                <input
-                  type="tel"
-                  required
-                  value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  placeholder="e.g. +94 77 123 4567"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                    Contact Phone Number *
+                  </label>
+                  <input
+                    type="tel"
+                    required
+                    value={formData.phone}
+                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                    placeholder="+94 7X XXX XXXX"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-teal-600"
+                  />
+                </div>
 
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Medicine Name & Strength</label>
-                <input
-                  type="text"
-                  required
-                  value={formData.medicineQuery}
-                  onChange={(e) => setFormData({ ...formData, medicineQuery: e.target.value })}
-                  placeholder="e.g. Augmentin 625mg or Salbutamol Inhaler"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                    Medicine / Formulation of Interest
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.medicineQuery}
+                    onChange={(e) => setFormData({ ...formData, medicineQuery: e.target.value })}
+                    placeholder="e.g. Augmentin 625mg, Insulin Glargine"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-teal-600"
+                  />
+                </div>
 
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Additional Notes / Inquiry Details</label>
-                <textarea
-                  rows={3}
-                  value={formData.message}
-                  onChange={(e) => setFormData({ ...formData, message: e.target.value })}
-                  placeholder="Ask any dosage, brand alternative, or batch inquiry..."
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 resize-none"
-                ></textarea>
-              </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                    Your Message or Clinical Question *
+                  </label>
+                  <textarea
+                    rows={4}
+                    required
+                    value={formData.message}
+                    onChange={(e) => setFormData({ ...formData, message: e.target.value })}
+                    placeholder="Please specify if you hold a doctor's prescription or have questions regarding dosage, cold-chain storage, or stock availability..."
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-teal-600"
+                  />
+                </div>
 
-              <button
-                type="submit"
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-500/20"
-              >
-                <Send className="w-4 h-4" />
-                Submit Availability Inquiry
-              </button>
-            </form>
-          )}
-
+                <button
+                  type="submit"
+                  className="w-full py-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>Submit Inquiry to Dispensary</span>
+                </button>
+              </form>
+            )}
+          </div>
         </div>
 
       </div>

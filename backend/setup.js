@@ -102,7 +102,10 @@ async function runDatabaseSetup() {
         (SELECT COUNT(*) FROM medicine_batches) AS batches_count,
         (SELECT COUNT(*) FROM brands) AS brands_count,
         (SELECT COUNT(*) FROM medicine_categories) AS categories_count,
-        (SELECT COUNT(*) FROM users) AS users_count
+        (SELECT COUNT(*) FROM users) AS users_count,
+        (SELECT COUNT(*) FROM purchases) AS purchases_count,
+        (SELECT COUNT(*) FROM sales) AS sales_count,
+        (SELECT COUNT(*) FROM payments) AS payments_count
     `);
     console.log('\n[DB Setup Summary]:');
     console.table(counts[0]);

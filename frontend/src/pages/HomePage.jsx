@@ -2,12 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { 
   Search, Pill, ShieldCheck, Clock, MapPin, Phone, 
   ArrowRight, Activity, CheckCircle2, AlertTriangle, 
-  Sparkles, Layers, ShieldAlert, Heart, Wind, Zap, Sun
+  Sparkles, Layers, ShieldAlert, Heart, Wind, Zap, Sun,
+  ThermometerSnowflake, FileCheck, Stethoscope, Award,
+  ChevronRight, Building2, Package, ShoppingBag, Check
 } from 'lucide-react';
 import MedicineCard from '../components/MedicineCard';
 import { getMedicines, getCategories, getPublicSettings } from '../services/api';
+import { useTheme } from '../context/ThemeContext';
+import { PHARMACY_IMAGES, getCategoryImage } from '../utils/pharmacyImages';
 
-// Map icon names from category database to Lucide components
+// Icon mapping for database category icon names
 const iconMap = {
   ShieldAlert: ShieldAlert,
   Activity: Activity,
@@ -19,7 +23,14 @@ const iconMap = {
   Pill: Pill
 };
 
-export default function HomePage({ setActivePage, setSelectedCategory, onViewDetails }) {
+export default function HomePage({ 
+  setActivePage, 
+  setSelectedCategory, 
+  onViewDetails,
+  onAddToCart,
+  cartItems = []
+}) {
+  const { isDark } = useTheme();
   const [searchQuery, setSearchQuery] = useState('');
   const [featuredMedicines, setFeaturedMedicines] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -51,150 +62,299 @@ export default function HomePage({ setActivePage, setSelectedCategory, onViewDet
 
   const handleHeroSearch = (e) => {
     e.preventDefault();
-    setActivePage('search', { query: searchQuery });
+    if (searchQuery.trim()) {
+      setActivePage('search', { query: searchQuery.trim() });
+    } else {
+      setActivePage('search');
+    }
   };
 
   const handleCategoryClick = (categoryId) => {
-    setSelectedCategory(categoryId);
+    if (setSelectedCategory) setSelectedCategory(categoryId);
     setActivePage('search', { categoryId });
   };
 
+  const isItemSaved = (id) => cartItems.some(item => item.medicine_id === id);
+
   return (
-    <div className="space-y-20 pb-16">
+    <div className="space-y-24 pb-20">
       
-      {/* Hero Section */}
-      <section className="relative overflow-hidden pt-12 pb-20 md:pt-20 md:pb-28">
-        {/* Ambient Gradient Glows */}
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[350px] bg-gradient-to-tr from-emerald-600/20 via-teal-500/15 to-cyan-500/10 blur-3xl pointer-events-none rounded-full"></div>
+      {/* ======================================================== */}
+      {/* 1. HERO SECTION (Inspired by Reference 2: Modern Healthcare) */}
+      {/* ======================================================== */}
+      <section className="relative overflow-hidden pt-8 pb-16 lg:pt-14 lg:pb-24 border-b border-slate-100 dark:border-slate-800/80 bg-gradient-to-b from-teal-50/40 via-white to-slate-50/60 dark:from-slate-900/50 dark:via-slate-950 dark:to-slate-950">
         
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
-          
-          {/* Badge */}
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/25 mb-6 shadow-inner">
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>Verified Physical Pharmacy Stock Portal</span>
-          </div>
+        {/* Soft background ambient gradient shapes */}
+        <div className="absolute top-10 left-1/4 w-96 h-96 bg-teal-400/10 dark:bg-teal-500/10 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="absolute top-1/2 right-10 w-80 h-80 bg-blue-500/10 dark:bg-blue-600/10 rounded-full blur-3xl pointer-events-none"></div>
 
-          {/* Heading */}
-          <h1 className="text-4xl sm:text-6xl font-black tracking-tight text-white max-w-4xl mx-auto leading-tight sm:leading-none">
-            Search Medicines. <br />
-            <span className="bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">
-              Check Real-Time Availability.
-            </span>
-          </h1>
-
-          {/* Subheading */}
-          <p className="text-slate-400 text-base sm:text-lg max-w-2xl mx-auto mt-6 leading-relaxed">
-            Verify actual in-stock medications at VDC Store before visiting. Accurate inventory tracking guarantees expired and recalled batches are automatically excluded.
-          </p>
-
-          {/* Search Box */}
-          <form onSubmit={handleHeroSearch} className="max-w-2xl mx-auto mt-10">
-            <div className="relative flex items-center p-2 rounded-2xl bg-slate-900/90 border border-slate-700/80 shadow-2xl shadow-emerald-950/30 backdrop-blur-xl group focus-within:border-emerald-500/60 focus-within:ring-2 focus-within:ring-emerald-500/20 transition-all">
-              <Search className="w-6 h-6 text-slate-400 ml-3 shrink-0 group-focus-within:text-emerald-400 transition-colors" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by medicine name, generic molecule (e.g. Amoxicillin, Paracetamol), or brand..."
-                className="w-full bg-transparent px-4 py-2.5 text-sm sm:text-base text-white placeholder-slate-500 focus:outline-none"
-              />
-              <button
-                type="submit"
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-bold text-sm shadow-md transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer shrink-0"
-              >
-                Search Stock
-              </button>
-            </div>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
             
-            {/* Quick search suggestions */}
-            <div className="flex flex-wrap items-center justify-center gap-2 mt-4 text-xs text-slate-400">
-              <span className="text-slate-400">Popular searches:</span>
-              {['Augmentin', 'Panadol', 'Lipitor', 'Ventolin', 'Nexium'].map((term) => (
+            {/* Left Column: Heading, Value Proposition & Search */}
+            <div className="lg:col-span-7 space-y-6 text-left">
+              
+              {/* Trust Badge */}
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold border shadow-xs bg-white dark:bg-slate-900 border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-300">
+                <span className="flex h-2 w-2 rounded-full bg-teal-500 animate-pulse"></span>
+                <span>Licensed Healthcare Dispensary • Verified Live Stock</span>
+              </div>
+
+              {/* Prominent Headline */}
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-[1.1] text-slate-900 dark:text-white">
+                Your Health, <br />
+                <span className="bg-gradient-to-r from-teal-700 via-teal-600 to-cyan-600 dark:from-teal-400 dark:via-teal-300 dark:to-cyan-400 bg-clip-text text-transparent">
+                  Our Priority.
+                </span>
+              </h1>
+
+              {/* Supporting Subtext */}
+              <p className="text-base sm:text-lg max-w-xl text-slate-600 dark:text-slate-300 leading-relaxed font-normal">
+                Convenient access to authentic pharmacy products, prescription medicines, and healthcare essentials. Verify real-time counter stock before your visit with our computerized dispensary catalog.
+              </p>
+
+              {/* Prominent Medicine Search Field */}
+              <form onSubmit={handleHeroSearch} className="max-w-xl pt-2">
+                <div className="relative flex items-center p-2 rounded-2xl border shadow-lg bg-white dark:bg-slate-900/90 border-slate-200 dark:border-slate-700 focus-within:border-teal-600 focus-within:ring-2 focus-within:ring-teal-500/20 transition-all">
+                  <Search className="w-5 h-5 text-teal-600 dark:text-teal-400 ml-3 shrink-0" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search by medicine name, generic formula (e.g. Amoxicillin), or brand..."
+                    className="w-full bg-transparent px-3 py-2.5 text-xs sm:text-sm focus:outline-none text-slate-800 dark:text-white placeholder-slate-400 dark:placeholder-slate-500"
+                  />
+                  <button
+                    type="submit"
+                    className="px-6 py-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shadow-sm shrink-0"
+                  >
+                    Search Stock
+                  </button>
+                </div>
+
+                {/* Popular Medicine Suggestions */}
+                <div className="flex flex-wrap items-center gap-2 mt-3 text-xs">
+                  <span className="text-slate-400 font-medium">Frequent inquiries:</span>
+                  {['Augmentin', 'Panadol', 'Lipitor', 'Ventolin', 'Nexium', 'Amoxicillin'].map((term) => (
+                    <button
+                      key={term}
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery(term);
+                        setActivePage('search', { query: term });
+                      }}
+                      className="px-2.5 py-1 rounded-lg border text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-teal-500 hover:text-teal-700 dark:hover:text-teal-300 transition-colors cursor-pointer"
+                    >
+                      {term}
+                    </button>
+                  ))}
+                </div>
+              </form>
+
+              {/* Primary & Secondary Call to Actions */}
+              <div className="flex flex-wrap items-center gap-4 pt-3">
                 <button
-                  key={term}
-                  type="button"
-                  onClick={() => {
-                    setSearchQuery(term);
-                    setActivePage('search', { query: term });
-                  }}
-                  className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 hover:border-emerald-500/40 hover:text-emerald-300 transition-colors cursor-pointer"
+                  onClick={() => setActivePage('search')}
+                  className="px-6 py-3.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs sm:text-sm flex items-center gap-2 shadow-md shadow-teal-900/10 transition-all cursor-pointer"
                 >
-                  {term}
+                  <Pill className="w-4 h-4 stroke-[2.2]" />
+                  <span>Browse Medicines</span>
+                  <ArrowRight className="w-4 h-4" />
                 </button>
-              ))}
-            </div>
-          </form>
 
-          {/* 3 Pillar Features */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto mt-16 text-left">
-            <div className="p-5 rounded-2xl bg-slate-900/50 border border-slate-800/80 backdrop-blur-sm">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-3">
-                <CheckCircle2 className="w-5 h-5" />
+                <button
+                  onClick={() => {
+                    // Navigate to vitamins / supplements category if available
+                    handleCategoryClick(7);
+                  }}
+                  className="px-6 py-3.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-800 font-bold text-xs sm:text-sm flex items-center gap-2 transition-all cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4 text-teal-600" />
+                  <span>Explore Health Essentials</span>
+                </button>
               </div>
-              <h3 className="text-sm font-bold text-white mb-1">Live Database Stock</h3>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Aggregated in real-time directly from physical store dispensary batch registers using MySQL triggers and functions.
-              </p>
-            </div>
 
-            <div className="p-5 rounded-2xl bg-slate-900/50 border border-slate-800/80 backdrop-blur-sm">
-              <div className="w-10 h-10 rounded-xl bg-teal-500/10 text-teal-400 flex items-center justify-center mb-3">
-                <AlertTriangle className="w-5 h-5" />
-              </div>
-              <h3 className="text-sm font-bold text-white mb-1">Expired Batches Excluded</h3>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Medicines nearing or past their expiration dates or marked for recall are automatically omitted from saleable stock calculations.
-              </p>
             </div>
 
-            <div className="p-5 rounded-2xl bg-slate-900/50 border border-slate-800/80 backdrop-blur-sm">
-              <div className="w-10 h-10 rounded-xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center mb-3">
-                <ShieldCheck className="w-5 h-5" />
+            {/* Right Column: High Quality Professional Healthcare Photography with Floating Stats Cards */}
+            <div className="lg:col-span-5 relative">
+              <div className="relative mx-auto max-w-md lg:max-w-none">
+                
+                {/* Main Hero Photo Container */}
+                <div className="relative rounded-3xl overflow-hidden shadow-2xl border-4 border-white dark:border-slate-800 aspect-[4/5] bg-slate-100 dark:bg-slate-800">
+                  <img
+                    src={PHARMACY_IMAGES.heroPharmacist}
+                    alt="Professional Pharmacist assisting in modern dispensary"
+                    className="w-full h-full object-cover object-center"
+                    loading="eager"
+                  />
+                  {/* Subtle bottom gradient overlay for card readability */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-transparent to-transparent"></div>
+                  
+                  {/* Caption on image */}
+                  <div className="absolute bottom-5 left-5 right-5 text-white">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-teal-300 block mb-1">
+                      Professional Patient Care
+                    </span>
+                    <p className="text-xs sm:text-sm font-semibold leading-tight">
+                      Registered pharmacists available for dosage review and safe prescription dispensing.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Floating Card 1: Real-Time Verified Stock (Top Left) */}
+                <div className="absolute -top-6 -left-6 sm:-left-8 p-4 rounded-2xl shadow-xl backdrop-blur-md border bg-white/95 dark:bg-slate-900/95 border-slate-100 dark:border-slate-800 flex items-center gap-3 animate-in fade-in zoom-in duration-300">
+                  <div className="w-10 h-10 rounded-xl bg-teal-50 dark:bg-teal-950/60 text-teal-600 flex items-center justify-center">
+                    <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Inventory Accuracy</span>
+                    <span className="text-sm font-black text-slate-900 dark:text-white">100% Genuine & Tracked</span>
+                  </div>
+                </div>
+
+                {/* Floating Card 2: 2°C - 8°C Cold Storage (Bottom Right) */}
+                <div className="absolute -bottom-6 -right-4 sm:-right-8 p-4 rounded-2xl shadow-xl backdrop-blur-md border bg-white/95 dark:bg-slate-900/95 border-slate-100 dark:border-slate-800 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-cyan-50 dark:bg-cyan-950/60 text-cyan-600 flex items-center justify-center">
+                    <ThermometerSnowflake className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Prescription Cold-Chain</span>
+                    <span className="text-sm font-black text-slate-900 dark:text-white">2°C – 8°C Monitored</span>
+                  </div>
+                </div>
+
               </div>
-              <h3 className="text-sm font-bold text-white mb-1">Physical Collection Only</h3>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                VDC Store preserves patient safety: medicines are dispensed exclusively over our pharmacy counter with genuine pharmacist consultation.
-              </p>
             </div>
+
           </div>
         </div>
       </section>
 
-      {/* Categories Showcase */}
+      {/* ======================================================== */}
+      {/* 2. VALUE PILLARS ("Why Choose My Pharmacist?") */}
+      {/* ======================================================== */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-end justify-between mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          
+          <div className="p-6 rounded-2xl border transition-all hover:shadow-md bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+            <div className="w-12 h-12 rounded-xl bg-teal-50 dark:bg-teal-950/60 text-teal-600 flex items-center justify-center mb-4">
+              <FileCheck className="w-6 h-6 stroke-[2]" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white mb-1.5">
+              100% Genuine Medicines
+            </h3>
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+              Every formulation is sourced strictly from NMRA-approved pharmaceutical manufacturers with full batch certificates.
+            </p>
+          </div>
+
+          <div className="p-6 rounded-2xl border transition-all hover:shadow-md bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+            <div className="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 flex items-center justify-center mb-4">
+              <ThermometerSnowflake className="w-6 h-6 stroke-[2]" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white mb-1.5">
+              Cold-Chain Protection
+            </h3>
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+              Continuous 2°C – 8°C computerized climate control protects the potency of sensitive insulins, eye drops, and biologicals.
+            </p>
+          </div>
+
+          <div className="p-6 rounded-2xl border transition-all hover:shadow-md bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+            <div className="w-12 h-12 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 flex items-center justify-center mb-4">
+              <Clock className="w-6 h-6 stroke-[2]" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white mb-1.5">
+              FEFO Expiry Protection
+            </h3>
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+              Automated database quarantine immediately isolates lots nearing expiration to guarantee zero expired medications.
+            </p>
+          </div>
+
+          <div className="p-6 rounded-2xl border transition-all hover:shadow-md bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+            <div className="w-12 h-12 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 flex items-center justify-center mb-4">
+              <Stethoscope className="w-6 h-6 stroke-[2]" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white mb-1.5">
+              Pharmacist Guided
+            </h3>
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+              Certified pharmacists review doctor prescriptions, dosage instructions, and drug interactions upon counter dispensation.
+            </p>
+          </div>
+
+        </div>
+      </section>
+
+      {/* ======================================================== */}
+      {/* 3. PRODUCT CATEGORIES (Visual Cards with Photography) */}
+      {/* ======================================================== */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
           <div>
-            <span className="text-xs font-mono uppercase tracking-wider text-teal-400 font-semibold">Browse By Group</span>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-white mt-1">Therapeutic Categories</h2>
+            <span className="text-xs font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400">
+              Therapeutic Classification
+            </span>
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white mt-1">
+              Browse by Medical Category
+            </h2>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mt-1">
+              Quickly locate medications and wellness formulations by clinical discipline and bodily system.
+            </p>
           </div>
           <button
             onClick={() => setActivePage('search')}
-            className="text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition-colors cursor-pointer"
+            className="text-xs font-bold text-teal-700 dark:text-teal-400 hover:underline flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
           >
-            View all medicines <ArrowRight className="w-4 h-4" />
+            <span>View All Categories</span>
+            <ArrowRight className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          {categories.slice(0, 8).map((cat) => {
-            const IconComp = iconMap[cat.icon_name] || Pill;
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">
+          {categories.map((cat) => {
+            const Icon = iconMap[cat.icon_name] || Pill;
+            const categoryPhoto = getCategoryImage(cat.category_id);
+
             return (
               <button
                 key={cat.category_id}
                 onClick={() => handleCategoryClick(cat.category_id)}
-                className="group p-5 rounded-2xl bg-slate-900/60 hover:bg-slate-900 border border-slate-800 hover:border-emerald-500/40 text-left transition-all duration-200 hover:-translate-y-1 cursor-pointer flex flex-col justify-between"
+                className="group relative rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:shadow-xl transition-all duration-300 text-left flex flex-col cursor-pointer"
               >
-                <div className="w-10 h-10 rounded-xl bg-slate-800 group-hover:bg-emerald-500/20 text-emerald-400 flex items-center justify-center mb-4 transition-colors">
-                  <IconComp className="w-5 h-5" />
+                {/* Category Image Header */}
+                <div className="relative w-full h-32 overflow-hidden bg-slate-100 dark:bg-slate-800">
+                  <img
+                    src={categoryPhoto}
+                    alt={cat.category_name}
+                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                    loading="lazy"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-950/20 to-transparent"></div>
+                  
+                  {/* Category Floating Icon */}
+                  <div className="absolute bottom-3 left-3 w-8 h-8 rounded-xl bg-white/90 dark:bg-slate-900/90 text-teal-600 flex items-center justify-center shadow-sm backdrop-blur-md">
+                    <Icon className="w-4 h-4" />
+                  </div>
                 </div>
-                <div>
-                  <h4 className="text-sm font-bold text-white group-hover:text-emerald-400 transition-colors line-clamp-1">
-                    {cat.category_name}
-                  </h4>
-                  <span className="text-xs text-slate-400 mt-1 block">
-                    {cat.medicine_count || 0} formulations
-                  </span>
+
+                {/* Category Text Content */}
+                <div className="p-4 flex-1 flex flex-col justify-between">
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white group-hover:text-teal-600 transition-colors line-clamp-1">
+                      {cat.category_name}
+                    </h4>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 mt-1 leading-relaxed">
+                      {cat.description || 'Verified pharmaceutical products available.'}
+                    </p>
+                  </div>
+
+                  <div className="pt-3 mt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] font-bold text-teal-600 dark:text-teal-400">
+                    <span>Explore Products</span>
+                    <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+                  </div>
                 </div>
               </button>
             );
@@ -202,25 +362,39 @@ export default function HomePage({ setActivePage, setSelectedCategory, onViewDet
         </div>
       </section>
 
-      {/* Featured Medicines Grid */}
+      {/* ======================================================== */}
+      {/* 4. FEATURED MEDICINES SHELF */}
+      {/* ======================================================== */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-end justify-between mb-8">
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
           <div>
-            <span className="text-xs font-mono uppercase tracking-wider text-teal-400 font-semibold">Real-Time Verification</span>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-white mt-1">Frequently Searched Medicines</h2>
+            <span className="text-xs font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400">
+              Verified Dispensary Stock
+            </span>
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white mt-1">
+              Featured Available Medicines
+            </h2>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mt-1">
+              Check real-time counter stock, prices, and therapeutic specifications ready for dispensation.
+            </p>
           </div>
           <button
             onClick={() => setActivePage('search')}
-            className="text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition-colors cursor-pointer"
+            className="text-xs font-bold text-teal-700 dark:text-teal-400 hover:underline flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
           >
-            Browse full catalog <ArrowRight className="w-4 h-4" />
+            <span>Browse Full Catalog</span>
+            <ArrowRight className="w-4 h-4" />
           </button>
         </div>
 
         {loading ? (
-          <div className="text-center py-16 text-slate-400 text-sm">
-            <div className="animate-spin w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full mx-auto mb-3"></div>
-            Loading verified inventory records...
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[...Array(6)].map((_, i) => (
+              <div 
+                key={i} 
+                className="h-80 rounded-2xl animate-pulse bg-slate-200 dark:bg-slate-800 border border-slate-200 dark:border-slate-800"
+              />
+            ))}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -229,42 +403,74 @@ export default function HomePage({ setActivePage, setSelectedCategory, onViewDet
                 key={med.medicine_id}
                 medicine={med}
                 onViewDetails={onViewDetails}
+                onAddToCart={onAddToCart}
+                isSaved={isItemSaved(med.medicine_id)}
               />
             ))}
           </div>
         )}
       </section>
 
-      {/* Real-time Pharmacy Visit Banner */}
+      {/* ======================================================== */}
+      {/* 5. PHARMACY SERVICE HIGHLIGHTS & TRUST PROTOCOLS */}
+      {/* ======================================================== */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-emerald-950/60 via-slate-900 to-teal-950/60 border border-emerald-500/30 p-8 sm:p-12 shadow-2xl">
-          <div className="max-w-2xl space-y-4">
-            <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-              Need In-Person Dispensation?
-            </span>
-            <h3 className="text-2xl sm:text-3xl font-black text-white">
-              Visit VDC Store Pharmacy Today
-            </h3>
-            <p className="text-sm text-slate-300 leading-relaxed">
-              Found your medicine in stock? Please bring your doctor's valid prescription to our dispensary counter at Bambalapitiya, Colombo. Our licensed staff pharmacists are ready to counsel and dispense safely.
-            </p>
+        <div className="rounded-3xl border p-8 sm:p-12 overflow-hidden relative bg-gradient-to-br from-teal-900 via-teal-950 to-slate-950 text-white shadow-xl">
+          
+          {/* Decorative shapes */}
+          <div className="absolute top-0 right-0 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center relative z-10">
             
-            <div className="flex flex-wrap items-center gap-4 pt-4">
-              <button
-                onClick={() => setActivePage('about')}
-                className="px-6 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs uppercase tracking-wider transition-all shadow-lg shadow-emerald-500/25 cursor-pointer"
-              >
-                View Location & Hours
-              </button>
+            <div className="lg:col-span-8 space-y-5">
+              <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-500/20 text-teal-300 border border-teal-500/30 uppercase tracking-wider">
+                Clinical Safety & Dispensary Protocols
+              </span>
               
+              <h2 className="text-2xl sm:text-4xl font-extrabold tracking-tight">
+                Dispensed Exclusively by Licensed Pharmacists
+              </h2>
+              
+              <p className="text-xs sm:text-sm text-slate-300 leading-relaxed max-w-2xl">
+                Every prescription medicine at My Pharmacist is verified against your doctor’s original prescription. We maintain strict batch lot accountability, temperature-logged cold chain refrigeration (2°C – 8°C), and real-time inventory synchronization.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-3 text-xs font-semibold">
+                <div className="flex items-center gap-2">
+                  <ThermometerSnowflake className="w-4 h-4 text-cyan-400 shrink-0" />
+                  <span>2°C – 8°C Biological Storage</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <FileCheck className="w-4 h-4 text-teal-400 shrink-0" />
+                  <span>NMRA Registered Drugs</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Award className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>Certified Pharmacists</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Helpline Card */}
+            <div className="lg:col-span-4 p-6 rounded-2xl border border-white/10 bg-white/10 backdrop-blur-md space-y-4 text-center">
+              <h4 className="text-sm font-bold text-white">
+                Have an Urgent Prescription Inquiry?
+              </h4>
+              <p className="text-xs text-slate-300">
+                Contact our dispensary counter directly to verify stock availability before your travel.
+              </p>
               <a
                 href="tel:+94112345678"
-                className="px-6 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-semibold text-xs transition-all flex items-center gap-2"
+                className="w-full py-3 rounded-xl text-xs font-bold bg-white text-slate-950 hover:bg-teal-50 transition-all flex items-center justify-center gap-2 shadow-md cursor-pointer"
               >
-                <Phone className="w-4 h-4 text-emerald-400" />
-                Call Helpline: +94 11 234 5678
+                <Phone className="w-4 h-4 text-teal-700" />
+                <span>Call +94 11 234 5678</span>
               </a>
+              <span className="text-[11px] text-teal-300 block">
+                Dispensary Hotline: 24/7 Available
+              </span>
             </div>
+
           </div>
         </div>
       </section>

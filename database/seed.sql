@@ -331,3 +331,56 @@ INSERT INTO pharmacy_settings (setting_key, setting_value, description, is_publi
 ('announcement', 'VDC Store provides real-time medicine availability verification. Please visit our physical pharmacy counter for dispensing.', 'Public alert banner', TRUE),
 ('default_low_stock_threshold', '20', 'Internal stock alarm trigger level', FALSE),
 ('system_version', '2.0.0-ADBMS', 'Software release identification', FALSE);
+
+-- ------------------------------------------------------------
+-- 9. SEED PURCHASES & PURCHASE ITEMS
+-- Initial supply invoices received from registered distributors
+-- ------------------------------------------------------------
+INSERT INTO purchases (purchase_id, supplier_id, invoice_number, purchase_date, total_amount, status, received_by, notes) VALUES
+(1, 1, 'PO-2026-001', DATE_SUB(CURDATE(), INTERVAL 14 DAY), 45000.00, 'RECEIVED', 'Chief Administrator', 'Quarterly antibiotic restock'),
+(2, 2, 'PO-2026-002', DATE_SUB(CURDATE(), INTERVAL 7 DAY), 62500.00, 'RECEIVED', 'Chief Administrator', 'Analgesics & cardiovascular formulations'),
+(3, 3, 'PO-2026-003', DATE_SUB(CURDATE(), INTERVAL 2 DAY), 28400.00, 'RECEIVED', 'Licensed Pharmacist', 'Vitamins & Respiratory replenishment');
+
+INSERT INTO purchase_items (purchase_item_id, purchase_id, medicine_id, batch_number, quantity, unit_cost, subtotal, expiry_date) VALUES
+(1, 1, 1, 'AUG-2026-01', 100, 140.00, 14000.00, DATE_ADD(CURDATE(), INTERVAL 365 DAY)),
+(2, 1, 2, 'AMX-2026-01', 120, 32.00, 3840.00, DATE_ADD(CURDATE(), INTERVAL 400 DAY)),
+(3, 2, 5, 'PAN-2026-01', 200, 4.50, 900.00, DATE_ADD(CURDATE(), INTERVAL 500 DAY)),
+(4, 2, 7, 'ATV-2026-01', 80, 52.00, 4160.00, DATE_ADD(CURDATE(), INTERVAL 300 DAY)),
+(5, 3, 10, 'VNT-2026-01', 30, 920.00, 27600.00, DATE_ADD(CURDATE(), INTERVAL 450 DAY));
+
+-- ------------------------------------------------------------
+-- 10. SEED SALES, SALE ITEMS, BATCH ALLOCATIONS & PAYMENTS
+-- Historical counter sales for daily and monthly reporting views
+-- ------------------------------------------------------------
+INSERT INTO sales (sale_id, invoice_number, user_id, patient_name, prescription_ref, subtotal, discount_amount, tax_amount, total_amount, payment_status, sale_date) VALUES
+(1, 'INV-2026-1001', 2, 'Mrs. Champa Wickramasinghe', 'RX-SLMC-4921', 1850.00, 0.00, 0.00, 1850.00, 'PAID', DATE_SUB(NOW(), INTERVAL 3 DAY)),
+(2, 'INV-2026-1002', 2, 'Mr. Roshan De Silva', 'OTC-Walk-in', 150.00, 0.00, 0.00, 150.00, 'PAID', DATE_SUB(NOW(), INTERVAL 2 DAY)),
+(3, 'INV-2026-1003', 2, 'Dr. Samantha Perera', 'RX-SLMC-8812', 3450.00, 0.00, 0.00, 3450.00, 'PAID', DATE_SUB(NOW(), INTERVAL 1 DAY)),
+(4, 'INV-2026-1004', 2, 'Mr. Nuwan Jayasuriya', 'RX-SLMC-1204', 1280.00, 0.00, 0.00, 1280.00, 'PAID', NOW()),
+(5, 'INV-2026-1005', 2, 'Walk-in Customer', 'OTC-Walk-in', 420.00, 0.00, 0.00, 420.00, 'PAID', NOW());
+
+INSERT INTO sale_items (sale_item_id, sale_id, medicine_id, quantity, unit_price, subtotal, packaging_desc) VALUES
+(1, 1, 1, 10, 185.00, 1850.00, '1 Card (10 Tablets)'),
+(2, 2, 5, 20, 7.50, 150.00, '2 Cards (20 Tablets)'),
+(3, 3, 10, 2, 1250.00, 2500.00, '2 Canisters (Inhalers)'),
+(4, 3, 5, 10, 7.50, 75.00, '1 Card (10 Tablets)'),
+(5, 3, 1, 4, 185.00, 740.00, '4 Loose Tablets'),
+(6, 4, 7, 20, 64.00, 1280.00, '2 Cards (20 Tablets)'),
+(7, 5, 2, 10, 42.00, 420.00, '1 Card (10 Capsules)');
+
+INSERT INTO sale_item_batches (allocation_id, sale_item_id, batch_id, quantity_allocated) VALUES
+(1, 1, 1, 10),
+(2, 2, 5, 20),
+(3, 3, 10, 2),
+(4, 4, 5, 10),
+(5, 5, 1, 4),
+(6, 6, 7, 20),
+(7, 7, 2, 10);
+
+INSERT INTO payments (payment_id, sale_id, payment_method, amount_paid, change_given, reference_note, payment_date) VALUES
+(1, 1, 'CASH', 2000.00, 150.00, 'Counter POS Cash Receipt #INV-2026-1001', DATE_SUB(NOW(), INTERVAL 3 DAY)),
+(2, 2, 'CASH', 200.00, 50.00, 'Counter POS Cash Receipt #INV-2026-1002', DATE_SUB(NOW(), INTERVAL 2 DAY)),
+(3, 3, 'CARD', 3450.00, 0.00, 'POS Visa Auth #984210 #INV-2026-1003', DATE_SUB(NOW(), INTERVAL 1 DAY)),
+(4, 4, 'CARD', 1280.00, 0.00, 'POS Master Auth #441920 #INV-2026-1004', NOW()),
+(5, 5, 'CASH', 500.00, 80.00, 'Counter POS Cash Receipt #INV-2026-1005', NOW());
+

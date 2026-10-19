@@ -98,6 +98,11 @@ export const adjustBatchStock = async (id, data) => {
   return response.data;
 };
 
+export const executeBatchAction = async (id, data) => {
+  const response = await api.post(`/admin/batches/${id}/action`, data);
+  return response.data;
+};
+
 export const getSuppliers = async () => {
   const response = await api.get('/admin/suppliers');
   return response.data;
@@ -118,9 +123,84 @@ export const getStockMovements = async () => {
   return response.data;
 };
 
-export const getAuditLogs = async () => {
-  const response = await api.get('/admin/audit-logs');
+export const getAuditLogs = async (params) => {
+  const response = await api.get('/admin/audit-logs', { params });
+  return response.data;
+};
+
+// POS Sales & Transaction History
+export const createSale = async (data) => {
+  const response = await api.post('/admin/sales', data);
+  return response.data;
+};
+
+export const getSalesHistory = async (params) => {
+  const response = await api.get('/admin/sales', { params });
+  return response.data;
+};
+
+// Advanced DBMS Reports
+export const getDailySalesReport = async (params) => {
+  const response = await api.get('/admin/reports/daily-sales', { params });
+  return response.data;
+};
+
+export const getMonthlySalesReport = async () => {
+  const response = await api.get('/admin/reports/monthly-sales');
+  return response.data;
+};
+
+export const getBestSellingReport = async (params) => {
+  const response = await api.get('/admin/reports/best-sellers', { params });
+  return response.data;
+};
+
+export const getInventoryValuationReport = async () => {
+  const response = await api.get('/admin/reports/inventory-valuation');
+  return response.data;
+};
+
+// Staff Account Management (ADMIN)
+export const getUsers = async () => {
+  const response = await api.get('/admin/users');
+  return response.data;
+};
+
+export const createUser = async (data) => {
+  const response = await api.post('/admin/users', data);
+  return response.data;
+};
+
+export const updateUser = async (id, data) => {
+  const response = await api.put(`/admin/users/${id}`, data);
+  return response.data;
+};
+
+export const toggleUserStatus = async (id, is_active) => {
+  const response = await api.patch(`/admin/users/${id}/status`, { is_active });
+  return response.data;
+};
+
+// Admin Catalog Management
+export const createCategory = async (data) => {
+  const response = await api.post('/admin/categories', data);
+  return response.data;
+};
+
+export const createBrand = async (data) => {
+  const response = await api.post('/admin/brands', data);
+  return response.data;
+};
+
+export const createSupplier = async (data) => {
+  const response = await api.post('/admin/suppliers', data);
+  return response.data;
+};
+
+export const updatePharmacySettings = async (data) => {
+  const response = await api.put('/admin/settings', data);
   return response.data;
 };
 
 export default api;
+

@@ -168,3 +168,132 @@ CREATE TABLE audit_logs (
     performed_by VARCHAR(100) DEFAULT 'System Trigger',
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
+
+-- ------------------------------------------------------------
+-- 10. PURCHASES TABLE
+-- Inbound supply shipments received from verified distributors
+-- ------------------------------------------------------------
+CREATE TABLE purchases (
+    purchase_id INT AUTO_INCREMENT PRIMARY KEY,
+    supplier_id INT NOT NULL,
+    invoice_number VARCHAR(80) NOT NULL UNIQUE,
+    purchase_date DATE NOT NULL,
+    total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    status ENUM('RECEIVED', 'PENDING', 'CANCELLED') NOT NULL DEFAULT 'RECEIVED',
+    received_by VARCHAR(100) DEFAULT 'Staff Pharmacist',
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_purchases_supplier FOREIGN KEY (supplier_id)
+        REFERENCES suppliers(supplier_id) ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+CREATE INDEX idx_purchases_supplier ON purchases(supplier_id);
+CREATE INDEX idx_purchases_date ON purchases(purchase_date);
+
+-- ------------------------------------------------------------
+-- 11. PURCHASE ITEMS TABLE
+-- Line items associated with incoming purchase invoices
+-- ------------------------------------------------------------
+CREATE TABLE purchase_items (
+    purchase_item_id INT AUTO_INCREMENT PRIMARY KEY,
+    purchase_id INT NOT NULL,
+    medicine_id INT NOT NULL,
+    batch_number VARCHAR(80) NOT NULL,
+    quantity INT NOT NULL,
+    unit_cost DECIMAL(10, 2) NOT NULL,
+    subtotal DECIMAL(10, 2) NOT NULL,
+    expiry_date DATE NOT NULL,
+    CONSTRAINT chk_purchase_qty CHECK (quantity > 0),
+    CONSTRAINT chk_purchase_cost CHECK (unit_cost >= 0),
+    CONSTRAINT fk_purchase_items_purchase FOREIGN KEY (purchase_id)
+        REFERENCES purchases(purchase_id) ON DELETE CASCADE,
+    CONSTRAINT fk_purchase_items_medicine FOREIGN KEY (medicine_id)
+        REFERENCES medicines(medicine_id) ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+CREATE INDEX idx_purchase_items_medicine ON purchase_items(medicine_id);
+
+-- ------------------------------------------------------------
+-- 12. SALES TABLE
+-- Counter POS transactions and formal dispensations
+-- ------------------------------------------------------------
+CREATE TABLE sales (
+    sale_id INT AUTO_INCREMENT PRIMARY KEY,
+    invoice_number VARCHAR(60) NOT NULL UNIQUE,
+    user_id INT NULL,
+    patient_name VARCHAR(150) NOT NULL DEFAULT 'Walk-in Customer',
+    prescription_ref VARCHAR(100) NOT NULL DEFAULT 'OTC',
+    subtotal DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    discount_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    tax_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    payment_status ENUM('PAID', 'PARTIAL', 'REFUNDED') NOT NULL DEFAULT 'PAID',
+    sale_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_sales_total CHECK (total_amount >= 0),
+    CONSTRAINT fk_sales_user FOREIGN KEY (user_id)
+        REFERENCES users(user_id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE INDEX idx_sales_date ON sales(sale_date);
+CREATE INDEX idx_sales_invoice ON sales(invoice_number);
+
+-- ------------------------------------------------------------
+-- 13. SALE ITEMS TABLE
+-- Medication line items within each sale transaction
+-- ------------------------------------------------------------
+CREATE TABLE sale_items (
+    sale_item_id INT AUTO_INCREMENT PRIMARY KEY,
+    sale_id INT NOT NULL,
+    medicine_id INT NOT NULL,
+    quantity INT NOT NULL,
+    unit_price DECIMAL(10, 2) NOT NULL,
+    subtotal DECIMAL(10, 2) NOT NULL,
+    packaging_desc VARCHAR(100) DEFAULT '1 Unit',
+    CONSTRAINT chk_sale_item_qty CHECK (quantity > 0),
+    CONSTRAINT chk_sale_item_price CHECK (unit_price >= 0),
+    CONSTRAINT fk_sale_items_sale FOREIGN KEY (sale_id)
+        REFERENCES sales(sale_id) ON DELETE CASCADE,
+    CONSTRAINT fk_sale_items_medicine FOREIGN KEY (medicine_id)
+        REFERENCES medicines(medicine_id) ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+CREATE INDEX idx_sale_items_sale ON sale_items(sale_id);
+CREATE INDEX idx_sale_items_medicine ON sale_items(medicine_id);
+
+-- ------------------------------------------------------------
+-- 14. SALE ITEM BATCH ALLOCATIONS TABLE
+-- 3NF bridge linking each line item to the exact batch deducted
+-- ------------------------------------------------------------
+CREATE TABLE sale_item_batches (
+    allocation_id INT AUTO_INCREMENT PRIMARY KEY,
+    sale_item_id INT NOT NULL,
+    batch_id INT NOT NULL,
+    quantity_allocated INT NOT NULL,
+    CONSTRAINT chk_allocation_qty CHECK (quantity_allocated > 0),
+    CONSTRAINT fk_alloc_sale_item FOREIGN KEY (sale_item_id)
+        REFERENCES sale_items(sale_item_id) ON DELETE CASCADE,
+    CONSTRAINT fk_alloc_batch FOREIGN KEY (batch_id)
+        REFERENCES medicine_batches(batch_id) ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+CREATE INDEX idx_alloc_batch ON sale_item_batches(batch_id);
+
+-- ------------------------------------------------------------
+-- 15. PAYMENTS TABLE
+-- Counter payments recorded for sales
+-- ------------------------------------------------------------
+CREATE TABLE payments (
+    payment_id INT AUTO_INCREMENT PRIMARY KEY,
+    sale_id INT NOT NULL,
+    payment_method ENUM('CASH', 'CARD', 'ONLINE', 'INSURANCE') NOT NULL DEFAULT 'CASH',
+    amount_paid DECIMAL(10, 2) NOT NULL,
+    change_given DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    reference_note VARCHAR(150),
+    payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_payment_amount CHECK (amount_paid >= 0),
+    CONSTRAINT fk_payments_sale FOREIGN KEY (sale_id)
+        REFERENCES sales(sale_id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE INDEX idx_payments_sale ON payments(sale_id);
+CREATE INDEX idx_payments_method ON payments(payment_method);
