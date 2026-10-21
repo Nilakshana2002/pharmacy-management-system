@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import MedicineDetailModal from './components/MedicineDetailModal';
-import InquiryCartModal from './components/InquiryCartModal';
 import HomePage from './pages/HomePage';
 import MedicineSearchPage from './pages/MedicineSearchPage';
 import AboutContactPage from './pages/AboutContactPage';
@@ -16,25 +15,6 @@ export default function App() {
   const [searchParams, setSearchParams] = useState({ query: '', categoryId: '' });
   const [selectedMedicine, setSelectedMedicine] = useState(null);
   const [staffUser, setStaffUser] = useState(null);
-  const [isCartOpen, setIsCartOpen] = useState(false);
-
-  // In-Store Inquiry Cart state (persisted to localStorage)
-  const [cartItems, setCartItems] = useState(() => {
-    try {
-      const saved = localStorage.getItem('my_pharmacist_cart');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('my_pharmacist_cart', JSON.stringify(cartItems));
-    } catch (e) {
-      console.warn('Could not persist cart to storage', e);
-    }
-  }, [cartItems]);
 
   // Restore staff session if token exists
   useEffect(() => {
@@ -51,12 +31,10 @@ export default function App() {
   }, []);
 
   const navigateTo = (page, params = {}) => {
-    if (params.query !== undefined || params.categoryId !== undefined) {
-      setSearchParams({
-        query: params.query || '',
-        categoryId: params.categoryId || ''
-      });
-    }
+    setSearchParams({
+      query: params.query || '',
+      categoryId: params.categoryId || ''
+    });
     setActivePage(page);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -68,28 +46,8 @@ export default function App() {
     setActivePage('home');
   };
 
-  const handleAddToCart = (medicine) => {
-    setCartItems(prev => {
-      const exists = prev.find(item => item.medicine_id === medicine.medicine_id);
-      if (exists) {
-        return prev.filter(item => item.medicine_id !== medicine.medicine_id);
-      }
-      return [...prev, { ...medicine, quantity: 1 }];
-    });
-  };
-
-  const handleRemoveCartItem = (id) => {
-    setCartItems(prev => prev.filter(item => item.medicine_id !== id));
-  };
-
-  const handleClearCart = () => {
-    setCartItems([]);
-  };
-
-  const isItemSavedInCart = (id) => cartItems.some(item => item.medicine_id === id);
-
   return (
-    <div className={`min-h-screen flex flex-col justify-between selection:bg-teal-500 selection:text-white font-sans transition-colors duration-200 ${
+    <div className={`min-h-screen w-full max-w-full overflow-x-hidden flex flex-col justify-between selection:bg-teal-500 selection:text-white font-sans transition-colors duration-200 ${
       isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
     }`}>
       
@@ -132,8 +90,6 @@ export default function App() {
           setActivePage={navigateTo}
           staffUser={staffUser}
           onLogout={handleLogout}
-          cartCount={cartItems.length}
-          onOpenCart={() => setIsCartOpen(true)}
         />
       )}
 
@@ -144,8 +100,6 @@ export default function App() {
             setActivePage={navigateTo}
             setSelectedCategory={(catId) => setSearchParams((prev) => ({ ...prev, categoryId: catId }))}
             onViewDetails={(med) => setSelectedMedicine(med)}
-            onAddToCart={handleAddToCart}
-            cartItems={cartItems}
           />
         )}
 
@@ -154,8 +108,6 @@ export default function App() {
             initialQuery={searchParams.query}
             initialCategoryId={searchParams.categoryId}
             onViewDetails={(med) => setSelectedMedicine(med)}
-            onAddToCart={handleAddToCart}
-            cartItems={cartItems}
           />
         )}
 
@@ -197,20 +149,8 @@ export default function App() {
         <MedicineDetailModal
           medicine={selectedMedicine}
           onClose={() => setSelectedMedicine(null)}
-          onAddToCart={handleAddToCart}
-          isSaved={isItemSavedInCart(selectedMedicine.medicine_id)}
         />
       )}
-
-      {/* In-Store Inquiry Cart Modal */}
-      <InquiryCartModal
-        isOpen={isCartOpen}
-        onClose={() => setIsCartOpen(false)}
-        cartItems={cartItems}
-        onRemoveItem={handleRemoveCartItem}
-        onClearCart={handleClearCart}
-        onSelectMedicine={(med) => setSelectedMedicine(med)}
-      />
 
       {/* Public Footer (Hidden when on internal staff dashboard for seamless full-bleed admin layout) */}
       {activePage !== 'dashboard' && (

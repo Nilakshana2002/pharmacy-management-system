@@ -174,3 +174,49 @@ FROM payments p
 INNER JOIN sales s ON p.sale_id = s.sale_id
 WHERE s.payment_status = 'PAID'
 GROUP BY p.payment_method;
+
+
+-- 9. Customers / Patients Table
+CREATE TABLE IF NOT EXISTS customers (
+    customer_id INT AUTO_INCREMENT PRIMARY KEY,
+    full_name VARCHAR(150) NOT NULL,
+    email VARCHAR(150) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    contact_no VARCHAR(50),
+    patient_age VARCHAR(50),
+    nic VARCHAR(50),
+    address TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
+ 
+-- 10. Prescription Orders Table
+CREATE TABLE IF NOT EXISTS prescription_orders (
+    order_id VARCHAR(50) PRIMARY KEY,
+    account_type ENUM('registered', 'guest') NOT NULL DEFAULT 'guest',
+    customer_id INT NULL,
+    your_name VARCHAR(150) NOT NULL,
+    your_email VARCHAR(150) NOT NULL,
+    patient_name VARCHAR(150) NOT NULL,
+    patient_age VARCHAR(50),
+    contact_no VARCHAR(50),
+    delivery_option VARCHAR(100) DEFAULT 'Dispensary Counter Pickup (Free)',
+    files JSON,
+    message TEXT,
+    status ENUM('pending', 'accepted', 'rejected', 'dispensed') NOT NULL DEFAULT 'pending',
+    pharmacist_name VARCHAR(150) NULL,
+    reviewed_at DATETIME NULL,
+    confirmation_message TEXT NULL,
+    rejection_reason TEXT NULL,
+    ready_time VARCHAR(100) NULL,
+    email_sent TINYINT(1) DEFAULT 0,
+    email_sent_at DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_prescription_orders_customer FOREIGN KEY (customer_id)
+        REFERENCES customers(customer_id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE INDEX IF NOT EXISTS idx_rx_email ON prescription_orders(your_email);
+CREATE INDEX IF NOT EXISTS idx_rx_status ON prescription_orders(status);
+CREATE INDEX IF NOT EXISTS idx_rx_created ON prescription_orders(created_at);

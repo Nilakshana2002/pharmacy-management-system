@@ -83,6 +83,11 @@ export const updateMedicine = async (id, data) => {
   return response.data;
 };
 
+export const updateMedicineOffer = async (id, data) => {
+  const response = await api.patch(`/admin/medicines/${id}/offer`, data);
+  return response.data;
+};
+
 export const getAdminBatches = async () => {
   const response = await api.get('/admin/batches');
   return response.data;
@@ -139,6 +144,11 @@ export const getSalesHistory = async (params) => {
   return response.data;
 };
 
+export const getSaleById = async (saleId) => {
+  const response = await api.get(`/admin/sales/${saleId}`);
+  return response.data;
+};
+
 // Advanced DBMS Reports
 export const getDailySalesReport = async (params) => {
   const response = await api.get('/admin/reports/daily-sales', { params });
@@ -178,6 +188,32 @@ export const updateUser = async (id, data) => {
 
 export const toggleUserStatus = async (id, is_active) => {
   const response = await api.patch(`/admin/users/${id}/status`, { is_active });
+  return response.data;
+};
+
+// Registered Website Customer / Patient Management (ADMIN & PHARMACIST)
+export const getAdminCustomers = async () => {
+  const response = await api.get('/admin/customers');
+  return response.data;
+};
+
+export const createAdminCustomer = async (data) => {
+  const response = await api.post('/admin/customers', data);
+  return response.data;
+};
+
+export const updateAdminCustomer = async (id, data) => {
+  const response = await api.put(`/admin/customers/${id}`, data);
+  return response.data;
+};
+
+export const toggleAdminCustomerStatus = async (id, is_active) => {
+  const response = await api.patch(`/admin/customers/${id}/status`, { is_active });
+  return response.data;
+};
+
+export const deleteAdminCustomer = async (id) => {
+  const response = await api.delete(`/admin/customers/${id}`);
   return response.data;
 };
 

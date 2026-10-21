@@ -139,7 +139,7 @@ export const login = async (req, res) => {
           can_pos: true,
           can_manage_medicines: true,
           can_manage_batches: true,
-          can_view_reports: false,
+          can_view_reports: true,
           can_view_audit: false,
           can_manage_users: false
         };

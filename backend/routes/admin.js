@@ -5,6 +5,7 @@ import {
   getAdminMedicines,
   createMedicine,
   updateMedicine,
+  toggleMedicineOffer,
   getBatches,
   createBatch,
   adjustBatchStock,
@@ -17,6 +18,7 @@ import {
   createSupplier,
   createSale,
   getSalesHistory,
+  getSaleById,
   getDailySalesReport,
   getMonthlySalesReport,
   getBestSellingReport,
@@ -25,6 +27,11 @@ import {
   createUser,
   updateUser,
   toggleUserStatus,
+  getCustomers,
+  createCustomer,
+  updateCustomer,
+  toggleCustomerStatus,
+  deleteCustomer,
   createCategory,
   createBrand,
   updatePharmacySettings
@@ -41,11 +48,13 @@ router.get('/dashboard', getDashboardStats);
 // 2. POS Counter Sales & Transaction History
 router.post('/sales', requireRoles('ADMIN', 'PHARMACIST'), createSale);
 router.get('/sales', requireRoles('ADMIN', 'PHARMACIST'), getSalesHistory);
+router.get('/sales/:id', requireRoles('ADMIN', 'PHARMACIST'), getSaleById);
 
 // 3. Medicine Formulary Management
 router.get('/medicines', getAdminMedicines);
 router.post('/medicines', requireRoles('ADMIN', 'PHARMACIST'), createMedicine);
 router.put('/medicines/:id', requireRoles('ADMIN', 'PHARMACIST'), updateMedicine);
+router.patch('/medicines/:id/offer', requireRoles('ADMIN', 'PHARMACIST'), toggleMedicineOffer);
 
 // 4. Batch Inventory & Stock Adjustments
 router.get('/batches', getBatches);
@@ -73,11 +82,18 @@ router.post('/users', requireRoles('ADMIN'), createUser);
 router.put('/users/:id', requireRoles('ADMIN'), updateUser);
 router.patch('/users/:id/status', requireRoles('ADMIN'), toggleUserStatus);
 
-// 8. Categories & Brands Management (ADMIN Only)
+// 8. Registered Website Patients / Customer Management (ADMIN & PHARMACIST)
+router.get('/customers', requireRoles('ADMIN', 'PHARMACIST'), getCustomers);
+router.post('/customers', requireRoles('ADMIN'), createCustomer);
+router.put('/customers/:id', requireRoles('ADMIN'), updateCustomer);
+router.patch('/customers/:id/status', requireRoles('ADMIN'), toggleCustomerStatus);
+router.delete('/customers/:id', requireRoles('ADMIN'), deleteCustomer);
+
+// 9. Categories & Brands Management (ADMIN Only)
 router.post('/categories', requireRoles('ADMIN'), createCategory);
 router.post('/brands', requireRoles('ADMIN'), createBrand);
 
-// 9. Store Settings (ADMIN Only)
+// 10. Store Settings (ADMIN Only)
 router.put('/settings', requireRoles('ADMIN'), updatePharmacySettings);
 
 export default router;

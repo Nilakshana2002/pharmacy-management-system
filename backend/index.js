@@ -10,6 +10,8 @@ import brandsRoutes from './routes/brands.js';
 import settingsRoutes from './routes/settings.js';
 import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin.js';
+import customersRoutes from './routes/customers.js';
+import prescriptionOrdersRoutes from './routes/prescriptionOrders.js';
 
 dotenv.config();
 
@@ -18,13 +20,16 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Mount Customer & Public Endpoints
 app.use('/api/medicines', medicinesRoutes);
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/brands', brandsRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/customers', customersRoutes);
+app.use('/api/prescription-orders', prescriptionOrdersRoutes);
 
 // Mount Authentication & Admin Management Endpoints
 app.use('/api/auth', authRoutes);
@@ -69,10 +74,13 @@ app.use((err, req, res, next) => {
   });
 });
 
+import { initializeDatabaseCatalog } from './scripts/initWellnessCatalog.js';
+
 // Start Server
 app.listen(PORT, async () => {
   console.log(`[VDC Store Server] Express running on port ${PORT}`);
   await testConnection();
+  await initializeDatabaseCatalog();
 });
 
 export default app;

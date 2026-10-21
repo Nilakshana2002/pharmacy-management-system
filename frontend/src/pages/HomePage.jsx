@@ -4,12 +4,14 @@ import {
   ArrowRight, Activity, CheckCircle2, AlertTriangle, 
   Sparkles, Layers, ShieldAlert, Heart, Wind, Zap, Sun,
   ThermometerSnowflake, FileCheck, Stethoscope, Award,
-  ChevronRight, Building2, Package, ShoppingBag, Check
+  ChevronRight, Building2, Package, ShoppingBag, Check, Flame
 } from 'lucide-react';
 import MedicineCard from '../components/MedicineCard';
+import FeedbackSection from '../components/FeedbackSection';
 import { getMedicines, getCategories, getPublicSettings } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
 import { PHARMACY_IMAGES, getCategoryImage } from '../utils/pharmacyImages';
+import { SPECIAL_OFFERS } from '../utils/wellnessCatalog';
 
 // Icon mapping for database category icon names
 const iconMap = {
@@ -26,13 +28,12 @@ const iconMap = {
 export default function HomePage({ 
   setActivePage, 
   setSelectedCategory, 
-  onViewDetails,
-  onAddToCart,
-  cartItems = []
+  onViewDetails
 }) {
   const { isDark } = useTheme();
   const [searchQuery, setSearchQuery] = useState('');
   const [featuredMedicines, setFeaturedMedicines] = useState([]);
+  const [offerMedicines, setOfferMedicines] = useState([]);
   const [categories, setCategories] = useState([]);
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
@@ -44,15 +45,17 @@ export default function HomePage({
   const loadHomeData = async () => {
     try {
       setLoading(true);
-      const [medsRes, catRes, setRes] = await Promise.all([
+      const [medsRes, catRes, setRes, offerRes] = await Promise.all([
         getMedicines({ limit: 6, sortBy: 'name_asc' }),
         getCategories(),
-        getPublicSettings()
+        getPublicSettings(),
+        getMedicines({ offersOnly: true, limit: 12 })
       ]);
 
       if (medsRes.success) setFeaturedMedicines(medsRes.data);
       if (catRes.success) setCategories(catRes.data);
       if (setRes.success) setSettings(setRes.data);
+      if (offerRes?.success) setOfferMedicines(offerRes.data || []);
     } catch (err) {
       console.error('Failed to load homepage data:', err);
     } finally {
@@ -73,8 +76,6 @@ export default function HomePage({
     if (setSelectedCategory) setSelectedCategory(categoryId);
     setActivePage('search', { categoryId });
   };
-
-  const isItemSaved = (id) => cartItems.some(item => item.medicine_id === id);
 
   return (
     <div className="space-y-24 pb-20">
@@ -403,8 +404,6 @@ export default function HomePage({
                 key={med.medicine_id}
                 medicine={med}
                 onViewDetails={onViewDetails}
-                onAddToCart={onAddToCart}
-                isSaved={isItemSaved(med.medicine_id)}
               />
             ))}
           </div>
@@ -412,7 +411,96 @@ export default function HomePage({
       </section>
 
       {/* ======================================================== */}
-      {/* 5. PHARMACY SERVICE HIGHLIGHTS & TRUST PROTOCOLS */}
+      {/* 5. SPECIAL OFFERS & DEALS SECTION */}
+      {/* ======================================================== */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="rounded-3xl border border-amber-200/80 dark:border-amber-900/40 p-8 sm:p-10 bg-gradient-to-br from-amber-500/10 via-rose-500/5 to-transparent dark:bg-slate-900">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-rose-600 text-white uppercase tracking-wider mb-2">
+                <Flame className="w-3.5 h-3.5 animate-pulse" />
+                <span>Special Offers & Health Deals</span>
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white">
+                Dispensary Seasonal Promotions
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mt-1">
+                Save on active promotional stock allocated directly by our pharmacy team.
+              </p>
+            </div>
+            <button
+              onClick={() => setActivePage('search', { query: 'offer' })}
+              className="px-5 py-3 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-2 cursor-pointer shadow-md shadow-rose-600/20 transition-all self-start md:self-auto"
+            >
+              <span>View All ({offerMedicines.length}) Deals</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Dynamic Allocated Offer Medicines Grid */}
+          {offerMedicines.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+              {offerMedicines.slice(0, 4).map((med) => (
+                <MedicineCard
+                  key={med.medicine_id}
+                  medicine={med}
+                  onViewDetails={onViewDetails}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="p-8 rounded-2xl bg-white/60 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 text-center mb-8">
+              <Flame className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+              <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                No active promotional offers allocated today.
+              </p>
+              <p className="text-xs text-slate-400 mt-1">
+                Our dispensary team regularly rotates seasonal savings. Check back soon or browse our full catalog.
+              </p>
+            </div>
+          )}
+
+          {/* Promotional Coupon Vouchers */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2 border-t border-amber-200/40 dark:border-slate-800/80">
+            {SPECIAL_OFFERS.map((offer) => (
+              <div
+                key={offer.id}
+                onClick={() => setActivePage('search', { query: 'offer' })}
+                className="p-5 rounded-2xl bg-white dark:bg-slate-950 border border-amber-200/60 dark:border-slate-800 shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="px-2.5 py-1 rounded-lg text-xs font-black bg-rose-500/10 text-rose-600 border border-rose-200 dark:border-rose-900">
+                      {offer.badge}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">
+                      Code: {offer.code}
+                    </span>
+                  </div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white mb-1">
+                    {offer.title}
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mb-4">
+                    {offer.description}
+                  </p>
+                </div>
+                <div className="flex items-center justify-between text-[11px] font-bold text-teal-600 dark:text-teal-400 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <span>Shop Promotion</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ======================================================== */}
+      {/* 6. PATIENT FEEDBACK & TESTIMONIALS SECTION */}
+      {/* ======================================================== */}
+      <FeedbackSection />
+
+      {/* ======================================================== */}
+      {/* 7. PHARMACY SERVICE HIGHLIGHTS & TRUST PROTOCOLS */}
       {/* ======================================================== */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="rounded-3xl border p-8 sm:p-12 overflow-hidden relative bg-gradient-to-br from-teal-900 via-teal-950 to-slate-950 text-white shadow-xl">

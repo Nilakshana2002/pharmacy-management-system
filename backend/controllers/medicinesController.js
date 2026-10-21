@@ -13,6 +13,7 @@ export const getMedicines = async (req, res) => {
       categoryId,
       brandId,
       availability,
+      offersOnly,
       sortBy = 'name_asc',
       page = 1,
       limit = 12
@@ -43,6 +44,11 @@ export const getMedicines = async (req, res) => {
     if (brandId) {
       whereConditions.push('m.brand_id = ?');
       queryParams.push(parseInt(brandId, 10));
+    }
+
+    // Offers only filter
+    if (offersOnly === 'true' || offersOnly === true || offersOnly === '1') {
+      whereConditions.push('m.is_offer = TRUE AND m.discount_percent > 0');
     }
 
     const whereClause = whereConditions.join(' AND ');
@@ -114,6 +120,10 @@ export const getMedicines = async (req, res) => {
           CASE WHEN m.is_public_price = TRUE THEN m.unit_price ELSE NULL END AS unit_price,
           m.is_public_price,
           m.low_stock_threshold,
+          COALESCE(m.discount_percent, 0.00) AS discount_percent,
+          COALESCE(m.is_offer, FALSE) AS is_offer,
+          COALESCE(m.rating, 5.0) AS rating,
+          m.image_url,
           b.brand_id,
           b.brand_name,
           b.country_of_origin,
@@ -197,6 +207,10 @@ export const getMedicineById = async (req, res) => {
         CASE WHEN m.is_public_price = TRUE THEN m.unit_price ELSE NULL END AS unit_price,
         m.is_public_price,
         m.low_stock_threshold,
+        COALESCE(m.discount_percent, 0.00) AS discount_percent,
+        COALESCE(m.is_offer, FALSE) AS is_offer,
+        COALESCE(m.rating, 5.0) AS rating,
+        m.image_url,
         b.brand_id,
         b.brand_name,
         b.country_of_origin,

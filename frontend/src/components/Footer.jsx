@@ -15,12 +15,18 @@ export default function Footer({ setActivePage }) {
           {/* Brand & Mission Statement */}
           <div className="md:col-span-1 space-y-4">
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-teal-700 to-teal-500 flex items-center justify-center text-white shadow-md">
-                <Pill className="w-5 h-5 stroke-[2.2]" />
+              <div className="w-10 h-10 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-1 flex items-center justify-center shadow-sm">
+                <img src="/favicon.svg" alt="My Pharmacist" className="w-full h-full object-contain" />
               </div>
-              <span className={`text-xl font-black tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                My Pharmacist
-              </span>
+              <div>
+                <span className="text-lg font-black tracking-tight">
+                  <span className="text-[#164e39] dark:text-emerald-400">My </span>
+                  <span className="text-[#268a84] dark:text-teal-400">Pharmacist</span>
+                </span>
+                <p className="text-[8.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                  Modern Dispensary &amp; Healthcare System
+                </p>
+              </div>
             </div>
             <p className="text-xs leading-relaxed">
               Your verified healthcare and medicine availability partner. Check real-time stock levels of genuine prescription and OTC medications before visiting our dispensary.
@@ -54,7 +60,23 @@ export default function Footer({ setActivePage }) {
                   onClick={() => setActivePage('search')}
                   className="hover:text-teal-600 dark:hover:text-teal-400 transition-colors cursor-pointer"
                 >
-                  Browse Medicines & Stock
+                  Browse Medicines Catalog
+                </button>
+              </li>
+              <li>
+                <button
+                  onClick={() => setActivePage('search', { categoryId: 'nutrition' })}
+                  className="hover:text-teal-600 dark:hover:text-teal-400 transition-colors cursor-pointer"
+                >
+                  Beauty, Nutrition & Wellness
+                </button>
+              </li>
+              <li>
+                <button
+                  onClick={() => setActivePage('search', { query: 'offer' })}
+                  className="hover:text-teal-600 dark:hover:text-teal-400 transition-colors cursor-pointer text-amber-600 font-semibold flex items-center gap-1"
+                >
+                  <span>🔥 Special Offers & Promotions</span>
                 </button>
               </li>
               <li>

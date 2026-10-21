@@ -7,18 +7,25 @@ import {
   Printer, Pill, Minus, PanelLeftClose, PanelLeftOpen, TrendingUp, TrendingDown,
   BarChart3, PieChart, ShieldCheck, Activity, LogOut, ChevronLeft, Globe, Menu, ExternalLink,
   Download, CalendarRange, FileSpreadsheet, KeyRound, CheckSquare, Square,
-  ShieldAlert, Trash2, RotateCcw, FileCheck, Ban
+  ShieldAlert, Trash2, RotateCcw, FileCheck, Ban, Eye, Info, Copy,
+  Zap, Droplets, Tag, ShoppingBag, Banknote, CreditCard, Flame, Percent,
+  Users, UserCheck, UserX, Mail, Phone, MapPin, UserPlus
 } from 'lucide-react';
 import { 
   getAdminDashboard, getAdminMedicines, getAdminBatches, 
   getLowStockReport, getExpiringBatchesReport, getAuditLogs, 
   getSuppliers, getCategories, getBrands, createMedicine,
-  updateMedicine, createBatch, adjustBatchStock, createSale,
-  getSalesHistory, getDailySalesReport, getMonthlySalesReport,
+  updateMedicine, updateMedicineOffer, createBatch, adjustBatchStock, createSale,
+  getSalesHistory, getSaleById, getDailySalesReport, getMonthlySalesReport,
   getBestSellingReport, getInventoryValuationReport, getUsers,
-  createUser, updateUser, toggleUserStatus, executeBatchAction
+  createUser, updateUser, toggleUserStatus, executeBatchAction,
+  getAdminCustomers, createAdminCustomer, updateAdminCustomer,
+  toggleAdminCustomerStatus, deleteAdminCustomer
 } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
+import PrescriptionOrdersManager from '../components/PrescriptionOrdersManager';
+import { getPrescriptionOrders, fetchPrescriptionOrdersFromApi } from '../utils/prescriptionOrdersService';
+import { getMedicineProductImage } from '../utils/pharmacyImages';
 
 export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsite }) {
   const { isDark } = useTheme();
@@ -44,6 +51,72 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   const [bestSellers, setBestSellers] = useState([]);
   const [valuation, setValuation] = useState(null);
   const [staffUsers, setStaffUsers] = useState([]);
+  const [customers, setCustomers] = useState([]);
+  const [userSubTab, setUserSubTab] = useState('staff'); // 'staff' | 'customers'
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [customerStatusFilter, setCustomerStatusFilter] = useState('all'); // 'all' | 'active' | 'suspended'
+  const [customerSaving, setCustomerSaving] = useState(false);
+  const [selectedSaleForInfo, setSelectedSaleForInfo] = useState(null);
+  const [saleInfoLoading, setSaleInfoLoading] = useState(false);
+  const [copiedInvoice, setCopiedInvoice] = useState(false);
+
+  const handleOpenSaleInfo = async (sale) => {
+    setSelectedSaleForInfo(sale);
+    setCopiedInvoice(false);
+    if (!sale.items || sale.items.length === 0) {
+      try {
+        setSaleInfoLoading(true);
+        const res = await getSaleById(sale.sale_id);
+        if (res?.success && res.data) {
+          setSelectedSaleForInfo(res.data);
+        }
+      } catch (err) {
+        console.warn('Could not fetch deep sale details, using cached row:', err);
+      } finally {
+        setSaleInfoLoading(false);
+      }
+    }
+  };
+
+  const handleCopyInvoiceNumber = (inv) => {
+    if (!inv) return;
+    navigator.clipboard?.writeText(inv);
+    setCopiedInvoice(true);
+    setTimeout(() => setCopiedInvoice(false), 2000);
+  };
+  const [pendingRxCount, setPendingRxCount] = useState(() => {
+    try {
+      const orders = getPrescriptionOrders();
+      return (orders || []).filter(o => o.status === 'pending').length;
+    } catch (e) {
+      return 0;
+    }
+  });
+
+  // Poll & listen to pending prescription orders count
+  useEffect(() => {
+    const updatePendingCount = async () => {
+      try {
+        const orders = await fetchPrescriptionOrdersFromApi();
+        const count = (orders || []).filter(o => o.status === 'pending').length;
+        setPendingRxCount(count);
+      } catch (e) {
+        try {
+          const orders = getPrescriptionOrders();
+          setPendingRxCount((orders || []).filter(o => o.status === 'pending').length);
+        } catch (err) {
+          // ignore
+        }
+      }
+    };
+    updatePendingCount();
+    window.addEventListener('pharmacy_prescription_orders_change', updatePendingCount);
+    const interval = setInterval(updatePendingCount, 5000);
+    return () => {
+      window.removeEventListener('pharmacy_prescription_orders_change', updatePendingCount);
+      clearInterval(interval);
+    };
+  }, []);
 
   // Search & Filter within staff tabs
   const [medSearch, setMedSearch] = useState('');
@@ -70,8 +143,15 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   const [editMedForm, setEditMedForm] = useState({
     name: '', generic_name: '', brand_id: '', category_id: '',
     dosage_form: 'Tablet', strength: '', description: '', unit_price: '',
-    low_stock_threshold: 20, is_active: true
+    low_stock_threshold: 20, is_active: true, is_offer: false, discount_percent: 0
   });
+
+  // Promotional Offer Allocation state
+  const [isOfferModalOpen, setIsOfferModalOpen] = useState(false);
+  const [selectedMedForOffer, setSelectedMedForOffer] = useState(null);
+  const [offerForm, setOfferForm] = useState({ is_offer: false, discount_percent: 10 });
+  const [offerSaving, setOfferSaving] = useState(false);
+  const [medOfferFilter, setMedOfferFilter] = useState('all'); // 'all' | 'offers' | 'regular'
 
   // Admin New Staff Modal state
   const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false);
@@ -104,6 +184,19 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
     }
   });
 
+  // Admin New Patient / Customer Modal state
+  const [isNewCustomerModalOpen, setIsNewCustomerModalOpen] = useState(false);
+  const [newCustomerForm, setNewCustomerForm] = useState({
+    full_name: '', email: '', password: '', contact_no: '', patient_age: '', nic: '', address: '', is_active: true
+  });
+
+  // Admin Edit Patient Details & Status Modal state
+  const [isEditCustomerModalOpen, setIsEditCustomerModalOpen] = useState(false);
+  const [selectedCustomerForEdit, setSelectedCustomerForEdit] = useState(null);
+  const [editCustomerForm, setEditCustomerForm] = useState({
+    full_name: '', email: '', password: '', contact_no: '', patient_age: '', nic: '', address: '', is_active: true, status: 'active'
+  });
+
   // Operational Reports Timeline & Export state
   const [reportTimeline, setReportTimeline] = useState('all'); // 'today', '7days', 'month', '30days', 'all', 'custom'
   const [customStartDate, setCustomStartDate] = useState('');
@@ -113,6 +206,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   // Quick Dispense (POS Counter) state
   const [dispenseCategoryId, setDispenseCategoryId] = useState('');
   const [dispenseSearch, setDispenseSearch] = useState('');
+  const [dispenseFormFilter, setDispenseFormFilter] = useState('all'); // 'all', 'tablet', 'syrup', 'injection', 'topical', 'inhaler'
   const [dispenseMedId, setDispenseMedId] = useState('');
   const [dispenseBatchId, setDispenseBatchId] = useState('');
   const [dispenseMode, setDispenseMode] = useState('card'); // 'card' | 'loose' | 'pack' | 'bottle' | 'vial' | 'tube' | 'inhaler'
@@ -127,6 +221,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   const [inhalerCount, setInhalerCount] = useState(1);
   const [patientName, setPatientName] = useState('');
   const [prescriptionRef, setPrescriptionRef] = useState('');
+  const [dispensePaymentMethod, setDispensePaymentMethod] = useState('CASH'); // 'CASH' | 'CARD'
   const [dispenseSuccess, setDispenseSuccess] = useState(null);
   const [dispenseLoading, setDispenseLoading] = useState(false);
 
@@ -150,7 +245,22 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
 
   useEffect(() => {
     loadDashboardData();
+
+    const handleSalesChange = () => {
+      loadDashboardData();
+    };
+
+    window.addEventListener('pharmacy_sales_change', handleSalesChange);
+    return () => {
+      window.removeEventListener('pharmacy_sales_change', handleSalesChange);
+    };
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'reports') {
+      loadDashboardData();
+    }
+  }, [activeTab]);
 
   const loadDashboardData = async () => {
     try {
@@ -170,13 +280,15 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         getMonthlySalesReport(),
         getBestSellingReport(),
         getInventoryValuationReport(),
-        getUsers()
+        getUsers(),
+        getAdminCustomers()
       ]);
 
       const [
         statsRes, medsRes, batchRes, lowRes, expRes, 
         logRes, supRes, catRes, brRes, salesRes, 
-        dailyRes, monthRes, bestRes, valRes, usersRes
+        dailyRes, monthRes, bestRes, valRes, usersRes,
+        customersRes
       ] = results.map((r) => (r.status === 'fulfilled' ? r.value : null));
 
       if (statsRes?.success) setStats(statsRes.data);
@@ -194,6 +306,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
       if (bestRes?.success) setBestSellers(bestRes.data || []);
       if (valRes?.success) setValuation(valRes.data || null);
       if (usersRes?.success) setStaffUsers(usersRes.data || []);
+      if (customersRes?.success) setCustomers(customersRes.data || []);
     } catch (err) {
       console.error('Error loading dashboard:', err);
     } finally {
@@ -213,7 +326,9 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
       description: med.description || '',
       unit_price: med.unit_price || '',
       low_stock_threshold: med.low_stock_threshold || 20,
-      is_active: med.is_active !== undefined ? med.is_active : true
+      is_active: med.is_active !== undefined ? med.is_active : true,
+      is_offer: Boolean(med.is_offer),
+      discount_percent: Number(med.discount_percent) || 0
     });
     setIsEditMedModalOpen(true);
   };
@@ -228,7 +343,9 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         category_id: parseInt(editMedForm.category_id, 10),
         unit_price: parseFloat(editMedForm.unit_price) || 0,
         low_stock_threshold: parseInt(editMedForm.low_stock_threshold, 10) || 20,
-        is_active: Boolean(editMedForm.is_active)
+        is_active: Boolean(editMedForm.is_active),
+        is_offer: Boolean(editMedForm.is_offer),
+        discount_percent: editMedForm.is_offer ? (parseFloat(editMedForm.discount_percent) || 0) : 0
       });
       if (res.success) {
         setIsEditMedModalOpen(false);
@@ -237,6 +354,59 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
       }
     } catch (err) {
       alert(err.response?.data?.message || 'Error updating medicine formulation');
+    }
+  };
+
+  // Open Promotional Offer Allocation Modal
+  const handleOpenOfferModal = (med) => {
+    setSelectedMedForOffer(med);
+    const hasOffer = Boolean(med.is_offer);
+    const disc = Number(med.discount_percent) || 10;
+    setOfferForm({
+      is_offer: hasOffer,
+      discount_percent: disc > 0 ? disc : 10
+    });
+    setIsOfferModalOpen(true);
+  };
+
+  // Save Promotional Offer
+  const handleSaveOffer = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!selectedMedForOffer) return;
+    try {
+      setOfferSaving(true);
+      const res = await updateMedicineOffer(selectedMedForOffer.medicine_id, {
+        is_offer: offerForm.is_offer,
+        discount_percent: offerForm.is_offer ? (parseFloat(offerForm.discount_percent) || 10) : 0
+      });
+      if (res.success) {
+        setIsOfferModalOpen(false);
+        setSelectedMedForOffer(null);
+        await loadDashboardData();
+      } else {
+        alert(res.message || 'Failed to update offer');
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error updating promotional offer');
+    } finally {
+      setOfferSaving(false);
+    }
+  };
+
+  // Quick 1-click offer toggle
+  const handleQuickToggleOffer = async (med) => {
+    try {
+      const nextOffer = !med.is_offer;
+      const nextDiscount = nextOffer ? (Number(med.discount_percent) > 0 ? Number(med.discount_percent) : 10) : 0;
+      const res = await updateMedicineOffer(med.medicine_id, {
+        is_offer: nextOffer,
+        discount_percent: nextDiscount
+      });
+      if (res.success) {
+        await loadDashboardData();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error toggling promotional offer');
     }
   };
 
@@ -260,6 +430,101 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
       }
     } catch (err) {
       alert(err.response?.data?.message || 'Error creating staff user');
+    }
+  };
+
+  // Customer / Patient Management Action Handlers
+  const handleCreateCustomer = async (e) => {
+    e.preventDefault();
+    try {
+      setCustomerSaving(true);
+      const res = await createAdminCustomer(newCustomerForm);
+      if (res.success) {
+        setIsNewCustomerModalOpen(false);
+        setNewCustomerForm({
+          full_name: '',
+          email: '',
+          password: '',
+          contact_no: '',
+          patient_age: '',
+          nic: '',
+          address: '',
+          is_active: true
+        });
+        await loadDashboardData();
+      } else {
+        alert(res.message || 'Failed to create patient account');
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error registering patient account');
+    } finally {
+      setCustomerSaving(false);
+    }
+  };
+
+  const handleOpenEditCustomer = (cust) => {
+    setSelectedCustomerForEdit(cust);
+    setEditCustomerForm({
+      full_name: cust.full_name || '',
+      email: cust.email || '',
+      password: '',
+      contact_no: cust.contact_no || '',
+      patient_age: cust.patient_age || '',
+      nic: cust.nic || '',
+      address: cust.address || '',
+      is_active: cust.is_active !== undefined ? Boolean(cust.is_active) : true,
+      status: cust.status || 'active'
+    });
+    setIsEditCustomerModalOpen(true);
+  };
+
+  const handleUpdateCustomer = async (e) => {
+    e.preventDefault();
+    if (!selectedCustomerForEdit) return;
+    try {
+      setCustomerSaving(true);
+      const res = await updateAdminCustomer(selectedCustomerForEdit.customer_id, editCustomerForm);
+      if (res.success) {
+        setIsEditCustomerModalOpen(false);
+        setSelectedCustomerForEdit(null);
+        await loadDashboardData();
+      } else {
+        alert(res.message || 'Failed to update patient profile');
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error updating patient profile');
+    } finally {
+      setCustomerSaving(false);
+    }
+  };
+
+  const handleToggleCustomerStatus = async (cust) => {
+    try {
+      const nextActive = !cust.is_active;
+      const res = await toggleAdminCustomerStatus(cust.customer_id, nextActive);
+      if (res.success) {
+        await loadDashboardData();
+      } else {
+        alert(res.message || 'Failed to toggle customer status');
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error toggling customer status');
+    }
+  };
+
+  const handleDeleteCustomer = async (cust) => {
+    if (!window.confirm(`Are you sure you want to permanently delete patient account for "${cust.full_name}"?`)) {
+      return;
+    }
+    try {
+      const res = await deleteAdminCustomer(cust.customer_id);
+      if (res.success) {
+        await loadDashboardData();
+      } else {
+        alert(res.message || 'Failed to delete customer');
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error deleting customer');
     }
   };
 
@@ -682,14 +947,73 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
     }
   }
 
-  // Filtered medicines for POS Counter
+  // Filtered medicines for POS Counter (Category, Search query, and Dosage Form)
   const filteredDispenseMedicines = medicines.filter(m => {
     const matchesCategory = !dispenseCategoryId || String(m.category_id) === String(dispenseCategoryId);
     const matchesSearch = !dispenseSearch || 
       m.name?.toLowerCase().includes(dispenseSearch.toLowerCase()) ||
       m.generic_name?.toLowerCase().includes(dispenseSearch.toLowerCase());
-    return matchesCategory && matchesSearch;
+
+    let matchesForm = true;
+    if (dispenseFormFilter !== 'all') {
+      const f = (m.dosage_form || '').toLowerCase();
+      if (dispenseFormFilter === 'tablet') matchesForm = f.includes('tablet') || f.includes('capsule');
+      else if (dispenseFormFilter === 'syrup') matchesForm = f.includes('syrup') || f.includes('suspension') || f.includes('liquid') || f.includes('drop');
+      else if (dispenseFormFilter === 'injection') matchesForm = f.includes('inject') || f.includes('vial') || f.includes('ampoule');
+      else if (dispenseFormFilter === 'topical') matchesForm = f.includes('cream') || f.includes('ointment') || f.includes('gel');
+      else if (dispenseFormFilter === 'inhaler') matchesForm = f.includes('inhal');
+    }
+
+    return matchesCategory && matchesSearch && matchesForm;
   });
+
+  // e-POS Category Dynamic Icon Resolver
+  const getCategoryIcon = (name = '') => {
+    const n = (name || '').toLowerCase();
+    if (n.includes('anti') || n.includes('infect')) return Pill;
+    if (n.includes('pain') || n.includes('analgesic') || n.includes('inflam')) return Zap;
+    if (n.includes('respir') || n.includes('cough') || n.includes('cold') || n.includes('lung')) return Activity;
+    if (n.includes('cardio') || n.includes('heart') || n.includes('hyper')) return Activity;
+    if (n.includes('gastro') || n.includes('stomach') || n.includes('digest')) return ShieldCheck;
+    if (n.includes('derma') || n.includes('skin') || n.includes('topical')) return Sparkles;
+    if (n.includes('vitamin') || n.includes('supplement') || n.includes('mineral')) return Sparkles;
+    if (n.includes('diabet') || n.includes('endocr')) return Clock;
+    if (n.includes('eye') || n.includes('ear') || n.includes('drop')) return Eye;
+    return Layers;
+  };
+
+  // e-POS Dosage Form Icon Resolver
+  const getDosageFormIcon = (form = '') => {
+    const f = (form || '').toLowerCase();
+    if (f.includes('tablet') || f.includes('capsule')) return Pill;
+    if (f.includes('syrup') || f.includes('liquid') || f.includes('suspension') || f.includes('drop')) return Droplets;
+    if (f.includes('inject') || f.includes('vial') || f.includes('ampoule')) return Activity;
+    if (f.includes('cream') || f.includes('ointment') || f.includes('gel')) return Sparkles;
+    if (f.includes('inhal')) return Activity;
+    return Package;
+  };
+
+  // One-click Walk-in Customer Autofill for fast cashier checkout
+  const handleQuickWalkIn = () => {
+    setPatientName('Walk-in Customer');
+    setPrescriptionRef('OTC-Walk-in');
+  };
+
+  // Full Reset POS register for next customer
+  const handleResetPos = () => {
+    setDispenseMedId('');
+    setDispenseBatchId('');
+    setPatientName('');
+    setPrescriptionRef('');
+    setCardCount(1);
+    setLooseCount(1);
+    setBottleCount(1);
+    setVialCount(1);
+    setTubeCount(1);
+    setInhalerCount(1);
+    setPackCount(1);
+    setDispenseSuccess(null);
+  };
 
   // Available batches for selected medicine in POS counter (strictly unexpired and active, sorted by FEFO)
   const availableBatchesForMed = batches
@@ -979,6 +1303,10 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
               <span class="row-label">Unit Rate:</span>
               <span class="row-val">Rs. ${rate}</span>
             </div>
+            <div class="row">
+              <span class="row-label">Payment Mode:</span>
+              <span class="row-val" style="font-weight: 800; color: ${data?.paymentMethod === 'CARD' ? '#0284c7' : '#059669'};">${data?.paymentMethod || 'CASH'}</span>
+            </div>
 
             <div class="solid-line"></div>
 
@@ -1033,35 +1361,19 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
       const price = Number(batch.unit_price || med?.unit_price || 0);
       const totalBill = price * calculatedDispenseUnits;
 
-      let res;
-      let invoiceNo = 'INV-COUNTER';
+      const res = await createSale({
+        patient_name: patientName.trim() || 'Walk-in Customer',
+        prescription_ref: prescriptionRef.trim() || 'OTC',
+        medicine_id: batch.medicine_id,
+        batch_id: batch.batch_id,
+        quantity: calculatedDispenseUnits,
+        unit_price: price,
+        packaging_desc: packagingDescription,
+        payment_method: dispensePaymentMethod || 'CASH',
+        amount_paid: totalBill
+      });
 
-      try {
-        res = await createSale({
-          patient_name: patientName.trim() || 'Walk-in Customer',
-          prescription_ref: prescriptionRef.trim() || 'OTC',
-          medicine_id: batch.medicine_id,
-          batch_id: batch.batch_id,
-          quantity: calculatedDispenseUnits,
-          unit_price: price,
-          packaging_desc: packagingDescription,
-          payment_method: 'CASH',
-          amount_paid: totalBill
-        });
-        if (res?.data?.invoice_number) {
-          invoiceNo = res.data.invoice_number;
-        }
-      } catch (saleErr) {
-        // Safe fallback to batch adjustment if sales table is being migrated
-        console.warn('createSale fallback:', saleErr);
-        const newStock = batch.stock_quantity - calculatedDispenseUnits;
-        const reasonNote = `POS: ${packagingDescription} to ${patientName || 'Walk-in'} (Rx: ${prescriptionRef || 'OTC'})`.slice(0, 240);
-        res = await adjustBatchStock(batch.batch_id, {
-          new_quantity: newStock,
-          reason: reasonNote,
-          movement_type: 'DISPENSED'
-        });
-      }
+      const invoiceNo = res?.data?.invoice_number || 'INV-COUNTER';
 
       if (res && res.success) {
         const receiptData = {
@@ -1076,6 +1388,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
           totalBill: totalBill,
           patientName: patientName || 'Walk-in Customer',
           prescriptionRef: prescriptionRef || 'OTC-Walk-in',
+          paymentMethod: dispensePaymentMethod || 'CASH',
           date: new Date().toLocaleString()
         };
 
@@ -1089,6 +1402,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         setDispenseSearch('');
         setPatientName('');
         setPrescriptionRef('');
+        setDispensePaymentMethod('CASH');
         setCardCount(1);
         setTabletsPerCard(10);
         setLooseCount(1);
@@ -1106,8 +1420,12 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
           console.warn('Auto-print slip dialog could not be opened automatically:', printErr);
         }
 
-        // 4. Reload live inventory stock
+        // 4. Reload live inventory stock and notify all reporting views
         await loadDashboardData();
+        if (typeof handleTimelinePreset === 'function') {
+          handleTimelinePreset(reportTimeline || 'all');
+        }
+        window.dispatchEvent(new CustomEvent('pharmacy_sales_change'));
       } else {
         alert(res?.message || 'Dispensation failed.');
       }
@@ -1120,40 +1438,72 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   };
 
   // Filtered lists for tabs
-  const filteredMeds = medicines.filter(m => 
-    m.name?.toLowerCase().includes(medSearch.toLowerCase()) ||
-    m.generic_name?.toLowerCase().includes(medSearch.toLowerCase()) ||
-    m.brand_name?.toLowerCase().includes(medSearch.toLowerCase())
-  );
+  const filteredMeds = medicines.filter(m => {
+    const matchesSearch = 
+      m.name?.toLowerCase().includes(medSearch.toLowerCase()) ||
+      m.generic_name?.toLowerCase().includes(medSearch.toLowerCase()) ||
+      m.brand_name?.toLowerCase().includes(medSearch.toLowerCase());
+    if (!matchesSearch) return false;
+
+    if (medOfferFilter === 'offers') {
+      return Boolean(m.is_offer) && Number(m.discount_percent) > 0;
+    }
+    if (medOfferFilter === 'regular') {
+      return !m.is_offer || Number(m.discount_percent) <= 0;
+    }
+    return true;
+  });
 
   // Batch inventory calculations for Expiry, Quarantine & Action protocols
-  const expiredBatchesCount = batches.filter(b => (b.is_expired === 1 || Number(b.days_to_expiry) <= 0) && b.stock_quantity > 0 && b.status === 'active').length;
-  const criticalBatchesCount = batches.filter(b => Number(b.days_to_expiry) > 0 && Number(b.days_to_expiry) <= 30 && b.stock_quantity > 0 && b.status === 'active').length;
-  const quarantinedBatchesCount = batches.filter(b => b.status === 'quarantined').length;
-  const activeSaleableBatchesCount = batches.filter(b => b.status === 'active' && Number(b.days_to_expiry) > 0 && b.stock_quantity > 0).length;
+  const isBatchExpired = (b) => (b.is_expired === 1 || Number(b.days_to_expiry) <= 0 || (b.expiry_date && new Date(b.expiry_date) <= new Date()));
+  const isBatchCritical = (b) => !isBatchExpired(b) && Number(b.days_to_expiry) <= 30 && Number(b.stock_quantity) > 0;
+  const isBatchExpiringSoon = (b) => !isBatchExpired(b) && Number(b.days_to_expiry) <= 90 && Number(b.stock_quantity) > 0;
+  const isBatchQuarantined = (b) => b.status === 'quarantined';
+  const isBatchDepleted = (b) => Number(b.stock_quantity) === 0 || b.status === 'depleted';
+  const isBatchSafeActive = (b) => b.status === 'active' && !isBatchExpired(b) && Number(b.days_to_expiry) > 90 && Number(b.stock_quantity) > 0;
+
+  const expiredBatchesCount = batches.filter(b => isBatchExpired(b)).length;
+  const expiredWithStockCount = batches.filter(b => isBatchExpired(b) && Number(b.stock_quantity) > 0).length;
+  const criticalBatchesCount = batches.filter(b => isBatchCritical(b)).length;
+  const expiringSoonCount = batches.filter(b => isBatchExpiringSoon(b)).length;
+  const quarantinedBatchesCount = batches.filter(b => isBatchQuarantined(b)).length;
+  const depletedBatchesCount = batches.filter(b => isBatchDepleted(b)).length;
+  const activeSaleableBatchesCount = batches.filter(b => isBatchSafeActive(b)).length;
+
+  // Total Alert Count for Sidebar:
+  // Flags batches requiring attention: expired with stock (emergency) OR expiring within 90 days with stock (FEFO priority)
+  const totalExpiryAlertCount = expiredWithStockCount > 0 ? (expiredWithStockCount + expiringSoonCount) : expiringSoonCount;
 
   const filteredBatches = batches.filter(b => {
-    // Search match
-    const matchesSearch = !batchSearch ||
-      b.batch_number?.toLowerCase().includes(batchSearch.toLowerCase()) ||
-      b.medicine_name?.toLowerCase().includes(batchSearch.toLowerCase()) ||
-      b.supplier_name?.toLowerCase().includes(batchSearch.toLowerCase());
+    // Search match across lot #, medicine name, generic name, supplier name
+    const q = batchSearch.toLowerCase().trim();
+    const matchesSearch = !q ||
+      b.batch_number?.toLowerCase().includes(q) ||
+      b.medicine_name?.toLowerCase().includes(q) ||
+      b.generic_name?.toLowerCase().includes(q) ||
+      b.supplier_name?.toLowerCase().includes(q);
     if (!matchesSearch) return false;
 
     // Filter type match
     if (batchFilter === 'expired') {
-      return (b.is_expired === 1 || Number(b.days_to_expiry) <= 0) && b.stock_quantity > 0 && b.status === 'active';
+      return isBatchExpired(b);
     }
     if (batchFilter === 'critical') {
-      return Number(b.days_to_expiry) > 0 && Number(b.days_to_expiry) <= 30 && b.stock_quantity > 0 && b.status === 'active';
+      return isBatchCritical(b);
+    }
+    if (batchFilter === 'expiring_soon') {
+      return isBatchExpiringSoon(b);
     }
     if (batchFilter === 'quarantined') {
-      return b.status === 'quarantined';
+      return isBatchQuarantined(b);
+    }
+    if (batchFilter === 'depleted') {
+      return isBatchDepleted(b);
     }
     if (batchFilter === 'active') {
-      return b.status === 'active' && Number(b.days_to_expiry) > 0 && b.stock_quantity > 0;
+      return isBatchSafeActive(b);
     }
-    return true;
+    return true; // 'all'
   });
 
   // Calculations for Reference 1 Dashboard Visualizations
@@ -1229,26 +1579,22 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
     can_manage_users: isAdmin
   };
 
-  // Safety: Prevent Admin from being stuck on POS tab
-  useEffect(() => {
-    if (isAdmin && activeTab === 'pos') {
-      setActiveTab('overview');
-    }
-  }, [isAdmin, activeTab]);
-
-  // Distinct Navigation Tabs: Admin has Executive Governance & Staff Control, Pharmacist has POS Dispense Counter
+  // Navigation Tabs: Both Admins and Pharmacists have access to the e-POS Counter
   const navTabs = isAdmin ? [
     { id: 'overview', label: 'Executive Overview', icon: Layers, badge: null, show: true },
+    { id: 'prescriptions', label: 'Prescription Orders', icon: FileCheck, badge: pendingRxCount > 0 ? `${pendingRxCount} New` : null, badgeColor: 'amber', show: true },
+    { id: 'pos', label: 'e-POS Counter', icon: ShoppingCart, badge: 'Live', show: true },
     { id: 'medicines', label: `Formulary Master (${medicines.length})`, icon: Package, badge: null, show: true },
-    { id: 'batches', label: `Batch & Stock (${batches.length})`, icon: Clock, badge: expiringList.length > 0 ? `${expiringList.length}` : null, badgeColor: 'rose', show: true },
+    { id: 'batches', label: `Batch & Stock (${batches.length})`, icon: Clock, badge: totalExpiryAlertCount > 0 ? `${totalExpiryAlertCount}` : null, badgeColor: expiredWithStockCount > 0 ? 'rose' : 'amber', show: true },
     { id: 'reports', label: 'Reports & Analytics', icon: BarChart3, badge: null, show: true },
-    { id: 'users', label: `Staff Accounts (${staffUsers.length})`, icon: ShieldCheck, badge: 'Admin', show: true }
+    { id: 'users', label: `User Management (${staffUsers.length + customers.length})`, icon: ShieldCheck, badge: 'Admin', show: true }
   ] : [
     { id: 'overview', label: 'Dispensary Overview', icon: Activity, badge: null, show: true },
-    { id: 'pos', label: 'POS Dispense Counter', icon: ShoppingCart, badge: 'Live', show: userPerms.can_pos },
+    { id: 'prescriptions', label: 'Prescription Orders', icon: FileCheck, badge: pendingRxCount > 0 ? `${pendingRxCount} New` : null, badgeColor: 'amber', show: true },
+    { id: 'pos', label: 'e-POS Counter', icon: ShoppingCart, badge: 'Live', show: userPerms.can_pos },
     { id: 'medicines', label: `Medicine Master (${medicines.length})`, icon: Package, badge: null, show: userPerms.can_manage_medicines },
-    { id: 'batches', label: `Batch & Expiry (${batches.length})`, icon: Clock, badge: expiringList.length > 0 ? `${expiringList.length}` : null, badgeColor: 'rose', show: userPerms.can_manage_batches },
-    { id: 'reports', label: 'Dispensary Reports', icon: BarChart3, badge: null, show: userPerms.can_view_reports }
+    { id: 'batches', label: `Batch & Expiry (${batches.length})`, icon: Clock, badge: totalExpiryAlertCount > 0 ? `${totalExpiryAlertCount}` : null, badgeColor: expiredWithStockCount > 0 ? 'rose' : 'amber', show: userPerms.can_manage_batches },
+    { id: 'reports', label: 'Dispensary Reports', icon: BarChart3, badge: null, show: userPerms.can_view_reports !== false }
   ];
 
   return (
@@ -1298,6 +1644,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
               return (
                 <button
                   key={tab.id}
+                  id={`tab-btn-${tab.id}`}
                   onClick={() => setActiveTab(tab.id)}
                   title={sidebarCollapsed ? tab.label : undefined}
                   className={`w-full px-3 py-3 rounded-xl flex items-center gap-3 transition-all cursor-pointer ${
@@ -1318,9 +1665,11 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
                           tab.badgeColor === 'rose'
                             ? 'bg-rose-500 text-white'
-                            : isAdmin
-                              ? 'bg-indigo-500/20 text-indigo-300'
-                              : 'bg-teal-500/20 text-teal-300'
+                            : tab.badgeColor === 'amber'
+                              ? 'bg-amber-400 text-slate-950 font-black animate-pulse'
+                              : isAdmin
+                                ? 'bg-indigo-500/20 text-indigo-300'
+                                : 'bg-teal-500/20 text-teal-300'
                         }`}>
                           {tab.badge}
                         </span>
@@ -1445,7 +1794,9 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
                           tab.badgeColor === 'rose'
                             ? 'bg-rose-500 text-white'
-                            : isAdmin ? 'bg-indigo-500/20 text-indigo-300' : 'bg-teal-500/20 text-teal-300'
+                            : tab.badgeColor === 'amber'
+                              ? 'bg-amber-400 text-slate-950 font-black animate-pulse'
+                              : isAdmin ? 'bg-indigo-500/20 text-indigo-300' : 'bg-teal-500/20 text-teal-300'
                         }`}>
                           {tab.badge}
                         </span>
@@ -1506,12 +1857,14 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
               <h1 className="text-sm sm:text-base lg:text-lg font-black text-slate-900 dark:text-white truncate">
                 {isAdmin ? (
                   activeTab === 'overview' ? 'Executive Management & Financial Command' :
+                  activeTab === 'prescriptions' ? 'Prescription Order Supervision & Validation' :
                   activeTab === 'medicines' ? 'Formulary Master & Catalog Governance' :
                   activeTab === 'batches' ? 'Batch Stock & Supplier Supply Chain' :
                   activeTab === 'reports' ? 'Operational Reports & Financial Analytics' :
                   activeTab === 'users' ? 'Staff User Accounts & Access Control' : 'Executive Portal'
                 ) : (
                   activeTab === 'overview' ? 'Dispensary Station & Prescription Queue' :
+                  activeTab === 'prescriptions' ? 'Prescription Order Supervision & Counter Pickup Queue' :
                   activeTab === 'pos' ? 'Prescription POS Counter & Bill Generator' :
                   activeTab === 'medicines' ? 'Medicine Formulary Reference' :
                   activeTab === 'batches' ? 'Batch Expiry & Lot Shelf Control' :
@@ -1681,6 +2034,13 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
 
                     {/* Fast Action Buttons */}
                     <div className="flex flex-wrap md:flex-col gap-2 shrink-0">
+                      <button
+                        onClick={() => setActiveTab('prescriptions')}
+                        className="px-4 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-bold text-xs flex items-center gap-2 cursor-pointer border border-amber-500/30 transition-all"
+                      >
+                        <FileCheck className="w-4 h-4 text-amber-400" />
+                        Prescription Orders {pendingRxCount > 0 && `(${pendingRxCount})`}
+                      </button>
                       <button
                         onClick={() => setActiveTab('reports')}
                         className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-2 cursor-pointer shadow-md shadow-indigo-600/30 transition-all"
@@ -2164,33 +2524,132 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                     ? 'bg-gradient-to-r from-teal-950/80 via-slate-900 to-emerald-950/70 border-teal-500/25'
                     : 'bg-gradient-to-r from-teal-800 via-teal-700 to-emerald-700 text-white border-teal-600 shadow-md'
                 }`}>
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
-                    <div className="space-y-1.5 max-w-xl">
+                  <div className="space-y-1.5 max-w-3xl">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider font-extrabold bg-teal-400/20 text-teal-200 border border-teal-400/30">
+                        Dispensary Counter Active
+                      </span>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider font-bold bg-white/10 text-white border border-white/20">
+                        FEFO Enforced
+                      </span>
+                    </div>
+                    <h2 className="text-xl sm:text-2xl font-black text-white">
+                      Prescription Dispensing & Patient Counter
+                    </h2>
+                    <p className="text-xs text-teal-100/90 leading-relaxed">
+                      Ready to dispense prescription tablets, blister cards, loose counts, bottles, and vials with automatic lot batch deductions and receipt printing.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Real-time Sales, Revenue & Income Overview */}
+                <div className={`p-6 rounded-3xl border ${
+                  isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
+                }`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
+                    <div>
                       <div className="flex items-center gap-2">
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider font-extrabold bg-teal-400/20 text-teal-200 border border-teal-400/30">
-                          Dispensary Counter Active
-                        </span>
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider font-bold bg-white/10 text-white border border-white/20">
-                          FEFO Enforced
-                        </span>
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                        <h3 className={`text-base font-black flex items-center gap-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                          <TrendingUp className="w-4 h-4 text-teal-500" />
+                          Live Sales & Income Command
+                        </h3>
                       </div>
-                      <h2 className="text-xl sm:text-2xl font-black text-white">
-                        Prescription Dispensing & Patient Counter
-                      </h2>
-                      <p className="text-xs text-teal-100/90 leading-relaxed">
-                        Ready to dispense prescription tablets, blister cards, loose counts, bottles, and vials with automatic lot batch deductions and receipt printing.
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        Real-time revenue metrics calculated atomically from POS counter billing & online dispensary receipts
                       </p>
                     </div>
 
-                    {userPerms.can_pos && (
+                    <div className="flex items-center gap-2">
                       <button
                         onClick={() => setActiveTab('pos')}
-                        className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-400 to-teal-300 hover:from-emerald-300 hover:to-teal-200 text-slate-950 font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/25 shrink-0"
+                        className="px-3.5 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
                       >
-                        <ShoppingCart className="w-4 h-4 stroke-[2.5]" />
-                        <span>Launch POS Counter</span>
+                        <ShoppingCart className="w-3.5 h-3.5" />
+                        Open POS Counter
                       </button>
-                    )}
+                      <button
+                        onClick={() => {
+                          setActiveTab('reports');
+                          setReportSubTab('sales');
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                          isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                        }`}
+                      >
+                        View All Invoices
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {/* Card 1: Today's Revenue */}
+                    <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-950/60 border-slate-800/80' : 'bg-slate-50/80 border-slate-200'}`}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Today's Revenue</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-500/10 text-teal-600 dark:text-teal-400">
+                          Live POS
+                        </span>
+                      </div>
+                      <p className="text-xl sm:text-2xl font-black text-teal-600 dark:text-teal-400 font-mono">
+                        Rs. {Number(stats?.today_revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </p>
+                      <span className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
+                        <Receipt className="w-3 h-3 text-teal-500" />
+                        <span>{stats?.today_sales_count || 0} Bills Issued Today</span>
+                      </span>
+                    </div>
+
+                    {/* Card 2: Month-to-Date Revenue */}
+                    <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-950/60 border-slate-800/80' : 'bg-slate-50/80 border-slate-200'}`}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">MTD Income</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                          This Month
+                        </span>
+                      </div>
+                      <p className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white font-mono">
+                        Rs. {Number(stats?.monthly_revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </p>
+                      <span className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
+                        <Calendar className="w-3 h-3 text-purple-500" />
+                        <span>Calendar Month Sales</span>
+                      </span>
+                    </div>
+
+                    {/* Card 3: Total Transactions */}
+                    <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-950/60 border-slate-800/80' : 'bg-slate-50/80 border-slate-200'}`}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Sales Invoices</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                          Transactions
+                        </span>
+                      </div>
+                      <p className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white font-mono">
+                        {Number(stats?.total_sales_count || salesHistory.length).toLocaleString()}
+                      </p>
+                      <span className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-blue-500" />
+                        <span>System Transactions Recorded</span>
+                      </span>
+                    </div>
+
+                    {/* Card 4: Total Accumulated Income */}
+                    <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-950/60 border-slate-800/80' : 'bg-slate-50/80 border-slate-200'}`}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Accumulated Revenue</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                          Gross Total
+                        </span>
+                      </div>
+                      <p className="text-xl sm:text-2xl font-black text-emerald-600 dark:text-emerald-400 font-mono">
+                        Rs. {Number(stats?.total_revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </p>
+                      <span className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
+                        <TrendingUp className="w-3 h-3 text-emerald-500" />
+                        <span>All Dispensation Revenue</span>
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -2611,226 +3070,383 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
           )
         )}
 
-      {/* TAB 2: QUICK DISPENSE / POS COUNTER */}
+      {/* TAB 2: QUICK DISPENSE / e-POS COUNTER */}
       {activeTab === 'pos' && (
-        isAdmin ? (
-          <div className={`p-8 sm:p-12 rounded-3xl border text-center space-y-4 max-w-2xl mx-auto my-12 animate-in fade-in duration-150 ${
-            isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
-          }`}>
-            <div className="w-16 h-16 rounded-3xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center mx-auto border border-indigo-500/20">
-              <ShieldCheck className="w-8 h-8 stroke-[2.2]" />
-            </div>
-            <div className="space-y-1">
-              <h3 className="text-lg font-black text-slate-900 dark:text-white">
-                POS Dispense Counter is Restricted to Working Pharmacists
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
-                The Point-of-Sale dispense counter is reserved exclusively for clinical pharmacists dispensing prescription medicines to walk-in patients. As an Administrator, you oversee executive governance, financial reports, and user privileges.
-              </p>
-            </div>
-            <div className="pt-2 flex justify-center gap-3">
-              <button
-                onClick={() => setActiveTab('overview')}
-                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer shadow-md transition-all"
-              >
-                Go to Executive Overview
-              </button>
-              <button
-                onClick={() => setActiveTab('reports')}
-                className={`px-5 py-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-colors ${
-                  isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                View Financial Reports
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="space-y-6">
           
-          {/* Left 2 Cols: Dispensing Counter Form */}
-          <div className={`lg:col-span-2 p-6 sm:p-8 rounded-3xl border space-y-6 ${
-            isDark ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+          {/* Top e-POS Terminal Bar */}
+          <div className={`p-4 sm:p-5 rounded-3xl border flex flex-wrap items-center justify-between gap-4 ${
+            isDark ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
           }`}>
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800/40">
-              <div>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider text-teal-400 bg-teal-500/10 border border-teal-500/20 font-bold">
-                  Dispensary Counter POS
-                </span>
-                <h2 className={`text-xl font-black mt-1 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                  Prescription Dispensing & Packaging Calculator
-                </h2>
-                <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-                  Select category, choose formulation, and dispense by cards, loose tablets, bottles, or packs with instant FEFO lot tracking.
-                </p>
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-teal-500 to-emerald-400 text-slate-950 flex items-center justify-center font-black shadow-lg shadow-teal-500/20">
+                <ShoppingCart className="w-6 h-6 stroke-[2.4]" />
               </div>
-              <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-teal-500/20 to-emerald-500/10 text-teal-400 border border-teal-500/20 flex items-center justify-center shadow-inner">
-                <ShoppingCart className="w-5 h-5 stroke-[2.2]" />
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className={`text-lg sm:text-xl font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                    e-POS Dispensary Terminal
+                  </h2>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    Terminal #01 Active
+                  </span>
+                </div>
+                <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                  Tactile element point-of-sale: Click category tiles, pick formulations, and dispense with instant FEFO lot tracking.
+                </p>
               </div>
             </div>
 
-            <form onSubmit={handleQuickDispense} className="space-y-6 text-xs">
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+              <div className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+                isDark ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'
+              }`}>
+                <User className="w-3.5 h-3.5 text-teal-400" />
+                <span>Cashier: <strong className={isDark ? 'text-white' : 'text-slate-900'}>{staffUser?.fullName || 'Licensed Pharmacist'}</strong></span>
+                {isAdmin && (
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                    Admin Superuser
+                  </span>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={handleResetPos}
+                className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  isDark ? 'bg-slate-950 hover:bg-slate-800 border-slate-800 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+                }`}
+                title="Reset active register ticket"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Clear / Reset</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Main 2-Column POS Workspace */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            
+            {/* LEFT: Touch-friendly Product Catalog & Selection Elements */}
+            <div className="lg:col-span-7 xl:col-span-7 2xl:col-span-8 space-y-5">
               
-              {/* STEP 1: CATEGORY SELECTION */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className={`font-bold flex items-center gap-1.5 text-xs ${isDark ? 'text-teal-400' : 'text-teal-700'}`}>
-                    <span className="w-5 h-5 rounded-full bg-teal-500 text-slate-950 flex items-center justify-center text-[10px] font-black">1</span>
-                    Select Medicine Category
-                  </label>
+              {/* SECTION 1: e-POS CATEGORY TILES (ELEMENT-BASED SELECTOR) */}
+              <div className={`p-4 sm:p-5 rounded-3xl border ${
+                isDark ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+              }`}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-lg bg-teal-500 text-slate-950 font-black text-xs flex items-center justify-center shadow-xs">
+                      1
+                    </span>
+                    <div>
+                      <h3 className={`text-xs font-black uppercase tracking-wider ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                        Category Elements
+                      </h3>
+                      <span className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                        Tap a category tile to immediately filter products
+                      </span>
+                    </div>
+                  </div>
+
                   {dispenseCategoryId && (
                     <button
                       type="button"
                       onClick={() => handleSelectCategoryForDispense('')}
-                      className="text-[11px] text-slate-400 hover:text-white underline cursor-pointer"
+                      className="text-xs text-teal-400 hover:text-teal-300 font-bold flex items-center gap-1 cursor-pointer transition-colors"
                     >
-                      Clear Category (Show All)
+                      <X className="w-3.5 h-3.5" />
+                      <span>Show All Categories</span>
                     </button>
                   )}
                 </div>
 
-                {/* Category Pills Bar */}
-                <div className="flex flex-wrap gap-1.5 pt-1">
+                {/* Touch Category Elements Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                  {/* All Categories Tile */}
                   <button
                     type="button"
                     onClick={() => handleSelectCategoryForDispense('')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer border ${
+                    className={`p-3 rounded-2xl border text-left transition-all duration-150 cursor-pointer flex flex-col justify-between group relative overflow-hidden ${
                       !dispenseCategoryId
-                        ? 'bg-gradient-to-r from-teal-500 to-emerald-500 text-slate-950 font-bold border-teal-400 shadow-sm shadow-teal-500/20'
+                        ? 'bg-gradient-to-br from-teal-500 to-emerald-600 text-slate-950 border-teal-400 shadow-md shadow-teal-500/20 ring-2 ring-teal-400/50 scale-[1.02]'
                         : isDark
-                          ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
-                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                          ? 'bg-slate-950/80 hover:bg-slate-800/80 text-slate-200 border-slate-800 hover:border-slate-700'
+                          : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 hover:border-slate-300'
                     }`}
                   >
-                    All Categories ({medicines.length})
+                    <div className="flex items-center justify-between w-full mb-1.5">
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                        !dispenseCategoryId ? 'bg-slate-950/20 text-slate-950' : isDark ? 'bg-teal-500/10 text-teal-400' : 'bg-teal-100 text-teal-700'
+                      }`}>
+                        <Layers className="w-4 h-4 stroke-[2.4]" />
+                      </div>
+                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                        !dispenseCategoryId ? 'bg-slate-950/20 text-slate-950' : isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-700'
+                      }`}>
+                        {medicines.length}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-black text-xs block leading-tight">All Items</span>
+                      <span className={`text-[10px] block mt-0.5 truncate ${!dispenseCategoryId ? 'text-slate-900/80 font-semibold' : 'text-slate-400'}`}>
+                        Complete Catalog
+                      </span>
+                    </div>
                   </button>
+
+                  {/* Individual Categories Tiles */}
                   {categories.map((cat) => {
                     const countInCat = medicines.filter(m => String(m.category_id) === String(cat.category_id)).length;
                     const isSelected = String(dispenseCategoryId) === String(cat.category_id);
+                    const CatIcon = getCategoryIcon(cat.category_name);
+
                     return (
                       <button
                         key={cat.category_id}
                         type="button"
                         onClick={() => handleSelectCategoryForDispense(String(cat.category_id))}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer border flex items-center gap-1.5 ${
+                        className={`p-3 rounded-2xl border text-left transition-all duration-150 cursor-pointer flex flex-col justify-between group relative overflow-hidden ${
                           isSelected
-                            ? 'bg-gradient-to-r from-teal-500 to-emerald-500 text-slate-950 font-bold border-teal-400 shadow-sm shadow-teal-500/20'
+                            ? 'bg-gradient-to-br from-teal-500 to-emerald-600 text-slate-950 border-teal-400 shadow-md shadow-teal-500/20 ring-2 ring-teal-400/50 scale-[1.02]'
                             : isDark
-                              ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
-                              : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                              ? 'bg-slate-950/80 hover:bg-slate-800/80 text-slate-200 border-slate-800 hover:border-slate-700'
+                              : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 hover:border-slate-300'
                         }`}
                       >
-                        <span>{cat.category_name}</span>
-                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                          isSelected ? 'bg-slate-950/20 text-slate-950 font-bold' : isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-600'
-                        }`}>
-                          {countInCat}
-                        </span>
+                        <div className="flex items-center justify-between w-full mb-1.5">
+                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                            isSelected ? 'bg-slate-950/20 text-slate-950' : isDark ? 'bg-teal-500/10 text-teal-400' : 'bg-teal-100 text-teal-700'
+                          }`}>
+                            <CatIcon className="w-4 h-4 stroke-[2.4]" />
+                          </div>
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                            isSelected ? 'bg-slate-950/20 text-slate-950' : isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-700'
+                          }`}>
+                            {countInCat}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-black text-xs block leading-tight truncate" title={cat.category_name}>
+                            {cat.category_name}
+                          </span>
+                          <span className={`text-[10px] block mt-0.5 truncate ${isSelected ? 'text-slate-900/80 font-semibold' : 'text-slate-400'}`}>
+                            {cat.description || `${countInCat} med${countInCat === 1 ? '' : 's'}`}
+                          </span>
+                        </div>
                       </button>
                     );
                   })}
                 </div>
               </div>
 
-              {/* STEP 2: MEDICINE FORMULATION */}
-              <div className="space-y-2 pt-1 border-t border-slate-800/40">
-                <div className="flex items-center justify-between">
-                  <label className={`font-bold flex items-center gap-1.5 text-xs ${isDark ? 'text-teal-400' : 'text-teal-700'}`}>
-                    <span className="w-5 h-5 rounded-full bg-teal-500 text-slate-950 flex items-center justify-center text-[10px] font-black">2</span>
-                    Select Prescription Medicine *
-                  </label>
-                  <span className="text-[11px] text-slate-400">
-                    {filteredDispenseMedicines.length} formulation{filteredDispenseMedicines.length === 1 ? '' : 's'} available
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div className="sm:col-span-2">
-                    <select
-                      required
-                      value={dispenseMedId}
-                      onChange={(e) => handleSelectMedicineForDispense(e.target.value)}
-                      className={`w-full p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 font-medium ${
-                        isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
-                      }`}
-                    >
-                      <option value="">-- Choose Medicine Formulation --</option>
-                      {filteredDispenseMedicines.map((m) => (
-                        <option key={m.medicine_id} value={m.medicine_id}>
-                          {m.name} ({m.generic_name}) — [{m.dosage_form}] — Stock: {m.total_saleable_stock} units
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Filter search box */}
-                  <div className="relative">
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={dispenseSearch}
-                      onChange={(e) => setDispenseSearch(e.target.value)}
-                      placeholder="Quick filter med..."
-                      className={`w-full pl-9 pr-3 py-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
-                        isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
-                      }`}
-                    />
-                  </div>
-                </div>
-
-                {/* Selected Medicine Info Card */}
-                {selectedDispenseMed && (
-                  <div className={`p-3.5 rounded-2xl border flex flex-wrap items-center justify-between gap-3 ${
-                    isDark ? 'bg-teal-950/20 border-teal-500/20' : 'bg-teal-50/70 border-teal-200'
-                  }`}>
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-teal-500/10 text-teal-500 flex items-center justify-center font-bold">
-                        <Pill className="w-4 h-4" />
-                      </div>
+              {/* SECTION 2: MEDICINE FORMULARY CATALOG TILES (ELEMENT TYPE) */}
+              <div className={`p-4 sm:p-5 rounded-3xl border space-y-4 ${
+                isDark ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+              }`}>
+                {/* Search & Fast Formulation Filters */}
+                <div className="space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-lg bg-teal-500 text-slate-950 font-black text-xs flex items-center justify-center shadow-xs">
+                        2
+                      </span>
                       <div>
-                        <div className="flex items-center gap-2">
-                          <span className={`font-bold text-sm ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                            {selectedDispenseMed.name}
-                          </span>
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/20 text-teal-400 border border-teal-500/30">
-                            {selectedDispenseMed.dosage_form}
-                          </span>
-                          <span className="text-[10px] text-slate-400 font-mono">
-                            {selectedDispenseMed.strength}
-                          </span>
-                        </div>
-                        <span className="text-[11px] text-slate-400 block mt-0.5">
-                          Generic: {selectedDispenseMed.generic_name}
+                        <h3 className={`text-xs font-black uppercase tracking-wider ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                          Select Medication Item
+                        </h3>
+                        <span className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                          {filteredDispenseMedicines.length} formulation{filteredDispenseMedicines.length === 1 ? '' : 's'} available
                         </span>
                       </div>
                     </div>
 
-                    <div className="text-right">
-                      <span className={`text-[10px] uppercase font-bold block ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                        Catalog Unit Price
-                      </span>
-                      <span className="text-sm font-bold text-emerald-500">
-                        Rs. {Number(selectedDispenseMed.unit_price || 0).toFixed(2)}
-                      </span>
-                      <span className="text-[10px] text-slate-400 block font-mono">
-                        Total Stock: {selectedDispenseMed.total_saleable_stock} units
-                      </span>
+                    {/* Quick Search */}
+                    <div className="relative sm:w-72">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={dispenseSearch}
+                        onChange={(e) => setDispenseSearch(e.target.value)}
+                        placeholder="Quick search name, generic..."
+                        className={`w-full pl-9 pr-8 py-2 rounded-xl border text-xs focus:outline-none focus:border-teal-500 font-medium ${
+                          isDark ? 'bg-slate-950 border-slate-800 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                        }`}
+                      />
+                      {dispenseSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setDispenseSearch('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
+                  </div>
+
+                  {/* Dosage Form Tabs */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs scrollbar-none">
+                    {[
+                      { id: 'all', label: 'All Forms' },
+                      { id: 'tablet', label: '💊 Tablets & Caps' },
+                      { id: 'syrup', label: '🧪 Syrups & Liquids' },
+                      { id: 'injection', label: '💉 Injections & Vials' },
+                      { id: 'topical', label: '🧴 Creams & Gels' },
+                      { id: 'inhaler', label: '🫁 Inhalers' },
+                    ].map(tab => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setDispenseFormFilter(tab.id)}
+                        className={`px-3 py-1 rounded-xl text-[11px] font-bold whitespace-nowrap transition-colors cursor-pointer border ${
+                          dispenseFormFilter === tab.id
+                            ? 'bg-teal-500 text-slate-950 border-teal-400 shadow-xs'
+                            : isDark
+                              ? 'bg-slate-950 text-slate-400 hover:text-slate-200 border-slate-800'
+                              : 'bg-slate-100 text-slate-600 hover:text-slate-900 border-slate-200'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Medicine Items Grid */}
+                {filteredDispenseMedicines.length === 0 ? (
+                  <div className={`p-8 rounded-2xl border text-center space-y-2 ${
+                    isDark ? 'bg-slate-950/50 border-slate-800' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <AlertCircle className="w-8 h-8 text-amber-500 mx-auto" />
+                    <p className="text-xs font-bold text-slate-300">No medicines found matching your search or category.</p>
+                    <button
+                      type="button"
+                      onClick={() => { setDispenseSearch(''); setDispenseCategoryId(''); setDispenseFormFilter('all'); }}
+                      className="px-3.5 py-1.5 rounded-xl bg-teal-500/20 text-teal-400 hover:bg-teal-500/30 text-xs font-bold transition-colors cursor-pointer"
+                    >
+                      Reset All Filters
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 max-h-[460px] overflow-y-auto pr-1">
+                    {filteredDispenseMedicines.map((m) => {
+                      const isSelected = String(dispenseMedId) === String(m.medicine_id);
+                      const isOutOfStock = Number(m.total_saleable_stock || 0) <= 0;
+                      const isLowStock = !isOutOfStock && Number(m.total_saleable_stock || 0) <= (m.low_stock_threshold || 20);
+                      const FormIcon = getDosageFormIcon(m.dosage_form);
+
+                      return (
+                        <button
+                          key={m.medicine_id}
+                          type="button"
+                          onClick={() => handleSelectMedicineForDispense(String(m.medicine_id))}
+                          className={`p-3 rounded-2xl border text-left transition-all duration-150 cursor-pointer flex flex-col justify-between relative group ${
+                            isSelected
+                              ? 'bg-teal-500/15 border-teal-400 ring-2 ring-teal-400/60 shadow-lg shadow-teal-500/15 scale-[1.01]'
+                              : isOutOfStock
+                                ? isDark
+                                  ? 'bg-slate-950/40 border-slate-800/80 opacity-60'
+                                  : 'bg-slate-100/60 border-slate-200 opacity-60'
+                                : isDark
+                                  ? 'bg-slate-950/70 hover:bg-slate-800/80 border-slate-800 hover:border-slate-700'
+                                  : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-slate-300 shadow-xs'
+                          }`}
+                        >
+                          {isSelected && (
+                            <span className="absolute top-2 right-2 w-5 h-5 rounded-full bg-teal-500 text-slate-950 flex items-center justify-center shadow-md">
+                              <Check className="w-3 h-3 stroke-[3]" />
+                            </span>
+                          )}
+
+                          <div>
+                            {/* Medicine Image Thumbnail */}
+                            <div className="w-full h-24 rounded-xl bg-slate-50 dark:bg-slate-900/80 p-1.5 flex items-center justify-center mb-2.5 overflow-hidden border border-slate-100 dark:border-slate-800 shadow-2xs">
+                              <img 
+                                src={getMedicineProductImage(m)} 
+                                alt={m.name} 
+                                className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-200" 
+                                loading="lazy" 
+                              />
+                            </div>
+
+                            {/* Dosage Form & Strength Chip */}
+                            <div className="flex items-center gap-1.5 flex-wrap mb-1.5 pr-5">
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1 ${
+                                isSelected 
+                                  ? 'bg-teal-500/20 text-teal-300 border border-teal-500/40' 
+                                  : isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700'
+                              }`}>
+                                <FormIcon className="w-3 h-3" />
+                                <span>{m.dosage_form}</span>
+                              </span>
+                              {m.strength && (
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  {m.strength}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Medicine Trade Name */}
+                            <h4 className={`font-black text-xs sm:text-sm leading-tight line-clamp-2 ${
+                              isSelected ? 'text-teal-400' : isDark ? 'text-white' : 'text-slate-900'
+                            }`}>
+                              {m.name}
+                            </h4>
+
+                            {/* Generic / Molecule */}
+                            <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5 italic">
+                              {m.generic_name || 'Generic formulation'}
+                            </p>
+                          </div>
+
+                          {/* Bottom Row: Stock Badge & Price */}
+                          <div className="pt-2.5 mt-2 border-t border-slate-800/40 flex items-center justify-between">
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                              isOutOfStock 
+                                ? 'bg-rose-500/10 text-rose-500'
+                                : isLowStock 
+                                  ? 'bg-amber-500/10 text-amber-500'
+                                  : 'bg-emerald-500/10 text-emerald-400'
+                            }`}>
+                              {isOutOfStock ? 'Out of Stock' : `${m.total_saleable_stock} units`}
+                            </span>
+
+                            <span className="font-black text-xs font-mono text-emerald-400">
+                              Rs. {Number(m.unit_price || 0).toFixed(2)}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
 
-              {/* STEP 3: PHYSICAL LOT / BATCH (FEFO PRIORITIZED) */}
+              {/* SECTION 3: PHYSICAL LOT / BATCH SELECTION (ELEMENT CARDS) */}
               {dispenseMedId && (
-                <div className="space-y-2 pt-1 border-t border-slate-800/40">
+                <div className={`p-4 sm:p-5 rounded-3xl border space-y-3 ${
+                  isDark ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+                }`}>
                   <div className="flex items-center justify-between">
-                    <label className={`font-bold flex items-center gap-1.5 text-xs ${isDark ? 'text-teal-400' : 'text-teal-700'}`}>
-                      <span className="w-5 h-5 rounded-full bg-teal-500 text-slate-950 flex items-center justify-center text-[10px] font-black">3</span>
-                      Select Physical Batch / Lot (FEFO Prioritized) *
-                    </label>
-                    <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-lg bg-teal-500 text-slate-950 font-black text-xs flex items-center justify-center shadow-xs">
+                        3
+                      </span>
+                      <div>
+                        <h3 className={`text-xs font-black uppercase tracking-wider ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                          Physical Batch / Lot (FEFO Prioritized)
+                        </h3>
+                        <span className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                          Earliest expiring lot is automatically pre-selected
+                        </span>
+                      </div>
+                    </div>
+
+                    <span className="text-[11px] text-emerald-400 font-bold flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
                       <Clock className="w-3 h-3" />
-                      Earliest Expiry First
+                      FEFO Compliant
                     </span>
                   </div>
 
@@ -2839,832 +3455,776 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                       <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-rose-500" />
                       <div>
                         <span className="font-bold">Dispensing Lock Active: </span>
-                        {blockedBatchesForMed.length} lot(s) ({blockedBatchesForMed.map(b => `#${b.batch_number}`).join(', ')}) for this medicine are expired or quarantined and strictly blocked from counter dispensing.
+                        {blockedBatchesForMed.length} lot(s) ({blockedBatchesForMed.map(b => `#${b.batch_number}`).join(', ')}) for this medicine are expired or quarantined and blocked from counter dispensing.
                       </div>
                     </div>
                   )}
 
                   {availableBatchesForMed.length === 0 ? (
-                    <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs flex items-center gap-2">
+                    <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs flex items-center gap-2">
                       <AlertCircle className="w-4 h-4 shrink-0" />
                       <span>No active unexpired batches with stock available for this medication. Please receive or add a new batch in Batch Records.</span>
                     </div>
                   ) : (
-                    <div className="space-y-2">
-                      <select
-                        required
-                        value={dispenseBatchId}
-                        onChange={(e) => setDispenseBatchId(e.target.value)}
-                        className={`w-full p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 font-mono ${
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                      {availableBatchesForMed.map((b, idx) => {
+                        const isSelected = String(dispenseBatchId) === String(b.batch_id);
+                        const isEarliest = idx === 0;
+                        const isExpiringSoon = Number(b.days_to_expiry) <= 90;
+
+                        return (
+                          <button
+                            key={b.batch_id}
+                            type="button"
+                            onClick={() => setDispenseBatchId(String(b.batch_id))}
+                            className={`p-3 rounded-2xl border text-left transition-all duration-150 cursor-pointer flex flex-col justify-between relative ${
+                              isSelected
+                                ? 'bg-teal-500/15 border-teal-400 ring-2 ring-teal-400/60 shadow-md'
+                                : isDark
+                                  ? 'bg-slate-950/70 hover:bg-slate-800 border-slate-800'
+                                  : 'bg-white hover:bg-slate-50 border-slate-200'
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-center justify-between gap-1 mb-1">
+                                <span className="font-mono font-black text-xs text-teal-400">
+                                  Lot #{b.batch_number}
+                                </span>
+                                {isEarliest && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                                    ★ FEFO Best
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="text-[11px] text-slate-400 flex items-center justify-between">
+                                <span>Expiry:</span>
+                                <span className={`font-mono font-bold ${isExpiringSoon ? 'text-amber-400' : 'text-slate-300'}`}>
+                                  {new Date(b.expiry_date).toLocaleDateString()}
+                                </span>
+                              </div>
+
+                              <div className="text-[11px] text-slate-400 flex items-center justify-between mt-0.5">
+                                <span>Shelf Life:</span>
+                                <span className={`font-bold text-[10px] px-1.5 rounded ${
+                                  b.days_to_expiry <= 30
+                                    ? 'bg-rose-500/20 text-rose-400'
+                                    : b.days_to_expiry <= 90
+                                      ? 'bg-amber-500/20 text-amber-400'
+                                      : 'bg-emerald-500/20 text-emerald-400'
+                                }`}>
+                                  {b.days_to_expiry} days left
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="pt-2 mt-2 border-t border-slate-800/40 flex items-center justify-between">
+                              <span className="text-[10px] text-slate-400">Lot Stock:</span>
+                              <span className="font-bold font-mono text-xs text-emerald-400">
+                                {b.stock_quantity} units
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+            </div>
+
+            {/* RIGHT: Cashier Checkout Register & Receipt Drawer */}
+            <div className="lg:col-span-5 xl:col-span-5 2xl:col-span-4 space-y-5 sticky top-24">
+              
+              {/* Cashier Register Card */}
+              <div className={`p-5 sm:p-6 rounded-3xl border space-y-4 ${
+                isDark ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+              }`}>
+                {/* Register Header */}
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800/40">
+                  <div className="flex items-center gap-2">
+                    <Receipt className="w-5 h-5 text-emerald-400 stroke-[2.4]" />
+                    <div>
+                      <h3 className={`text-sm font-black uppercase tracking-wider ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                        Counter Register
+                      </h3>
+                      <span className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                        Prescription Bill & Receipt Drawer
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 1-Click Walk-in OTC Preset */}
+                  <button
+                    type="button"
+                    onClick={handleQuickWalkIn}
+                    className="px-2.5 py-1 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/30 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                    title="Fill as Walk-in OTC Customer"
+                  >
+                    <Zap className="w-3 h-3" />
+                    <span>Quick OTC</span>
+                  </button>
+                </div>
+
+                {/* Patient Information Inputs */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                  <div>
+                    <label className={`font-bold block mb-1 text-[11px] ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                      Patient / Customer Name
+                    </label>
+                    <div className="relative">
+                      <User className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={patientName}
+                        onChange={(e) => setPatientName(e.target.value)}
+                        placeholder="e.g. Kasun Fernando"
+                        className={`w-full pl-8 pr-2.5 py-2 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
                           isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
                         }`}
-                      >
-                        <option value="">-- Select Active Batch / Lot --</option>
-                        {availableBatchesForMed.map((b, idx) => (
-                          <option key={b.batch_id} value={b.batch_id}>
-                            {idx === 0 ? '★ [FEFO Priority] ' : ''}Lot: {b.batch_number} | Available: {b.stock_quantity} units | Expiry: {new Date(b.expiry_date).toLocaleDateString()} ({b.days_to_expiry}d left)
-                          </option>
-                        ))}
-                      </select>
-
-                      {selectedDispenseBatch && (
-                        <div className={`p-2.5 rounded-xl border flex items-center justify-between text-[11px] ${
-                          isDark ? 'bg-slate-950/60 border-slate-800 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'
-                        }`}>
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono font-bold text-teal-400">Lot #{selectedDispenseBatch.batch_number}</span>
-                            <span className="text-slate-400">•</span>
-                            <span>Exp: {new Date(selectedDispenseBatch.expiry_date).toLocaleDateString()}</span>
-                            <span className={`px-1.5 py-0.2 rounded font-bold ${
-                              selectedDispenseBatch.days_to_expiry <= 30
-                                ? 'bg-rose-500/20 text-rose-400'
-                                : selectedDispenseBatch.days_to_expiry <= 90
-                                  ? 'bg-amber-500/20 text-amber-400'
-                                  : 'bg-emerald-500/20 text-emerald-400'
-                            }`}>
-                              {selectedDispenseBatch.days_to_expiry} days remaining
-                            </span>
-                          </div>
-                          <div>
-                            Current Lot Stock: <strong className="text-emerald-400">{selectedDispenseBatch.stock_quantity}</strong> units
-                          </div>
-                        </div>
-                      )}
+                      />
                     </div>
-                  )}
-                </div>
-              )}
+                  </div>
 
-              {/* STEP 4: PACKAGING & DISPENSING QUANTITY MODE SELECTOR */}
-              {dispenseMedId && (
-                <div className="space-y-3 pt-1 border-t border-slate-800/40">
-                  <div className="flex items-center justify-between">
-                    <label className={`font-bold flex items-center gap-1.5 text-xs ${isDark ? 'text-teal-400' : 'text-teal-700'}`}>
-                      <span className="w-5 h-5 rounded-full bg-teal-500 text-slate-950 flex items-center justify-center text-[10px] font-black">4</span>
-                      Dispensing Packaging & Quantity Selection *
+                  <div>
+                    <label className={`font-bold block mb-1 text-[11px] ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                      Doctor Rx Ref / SLMC #
                     </label>
-                    <span className="text-[11px] text-teal-400 font-mono font-bold">
-                      Mode: {dispenseMode.toUpperCase()}
-                    </span>
+                    <div className="relative">
+                      <FileText className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={prescriptionRef}
+                        onChange={(e) => setPrescriptionRef(e.target.value)}
+                        placeholder="e.g. RX-2026-904"
+                        className={`w-full pl-8 pr-2.5 py-2 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                          isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                        }`}
+                      />
+                    </div>
                   </div>
+                </div>
 
-                  {/* CASE A: TABLETS & CAPSULES */}
-                  {isTabletOrCapsule && (
-                    <div className="space-y-3">
-                      {/* Sub-mode switcher for tablets */}
-                      <div className={`p-1 rounded-2xl border flex gap-1 ${
-                        isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'
-                      }`}>
-                        <button
-                          type="button"
-                          onClick={() => setDispenseMode('card')}
-                          className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                            dispenseMode === 'card'
-                              ? 'bg-teal-500 text-slate-950 shadow-sm'
-                              : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          <span>By Card / Blister Strip</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDispenseMode('loose')}
-                          className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                            dispenseMode === 'loose'
-                              ? 'bg-teal-500 text-slate-950 shadow-sm'
-                              : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          <span>Loose Tablets / Units</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDispenseMode('pack')}
-                          className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                            dispenseMode === 'pack'
-                              ? 'bg-teal-500 text-slate-950 shadow-sm'
-                              : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          <span>Full Box / Pack</span>
-                        </button>
-                      </div>
-
-                      {/* Mode: Cards */}
-                      {dispenseMode === 'card' && (
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between text-[11px] text-slate-400">
-                            <span>Quick Card Presets:</span>
-                            <div className="flex items-center gap-1">
-                              <span>Tablets per card:</span>
-                              <input
-                                type="number"
-                                min="1"
-                                max="100"
-                                value={tabletsPerCard}
-                                onChange={(e) => setTabletsPerCard(Math.max(1, parseInt(e.target.value, 10) || 10))}
-                                className={`w-12 px-1.5 py-0.5 rounded text-center font-bold border ${
-                                  isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'
-                                }`}
-                              />
-                            </div>
-                          </div>
-
-                          {/* Quick Card Presets: 1, 2, 3, 4, 5, 10 */}
-                          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                            {[1, 2, 3, 4, 5, 10].map((num) => (
-                              <button
-                                key={num}
-                                type="button"
-                                onClick={() => setCardCount(num)}
-                                className={`py-2.5 px-2 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
-                                  cardCount === num
-                                    ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/20'
-                                    : isDark
-                                      ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
-                                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-                                }`}
-                              >
-                                <span className="block">{num} Card{num > 1 ? 's' : ''}</span>
-                                <span className={`text-[10px] block font-mono ${cardCount === num ? 'text-slate-900 font-bold' : 'text-slate-400'}`}>
-                                  ({num * tabletsPerCard} tabs)
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-
-                          {/* Custom Card Stepper */}
-                          <div className="flex items-center gap-3 pt-1">
-                            <span className="text-[11px] text-slate-400">Custom Card Count:</span>
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => setCardCount(Math.max(1, cardCount - 1))}
-                                className={`w-8 h-8 rounded-lg border flex items-center justify-center font-bold text-sm cursor-pointer ${
-                                  isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-white' : 'bg-slate-100 border-slate-300 hover:bg-slate-200 text-slate-900'
-                                }`}
-                              >
-                                <Minus className="w-3.5 h-3.5" />
-                              </button>
-                              <input
-                                type="number"
-                                min="1"
-                                value={cardCount}
-                                onChange={(e) => setCardCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                                className={`w-16 h-8 rounded-lg text-center font-bold text-xs border ${
-                                  isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'
-                                }`}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setCardCount(cardCount + 1)}
-                                className={`w-8 h-8 rounded-lg border flex items-center justify-center font-bold text-sm cursor-pointer ${
-                                  isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-white' : 'bg-slate-100 border-slate-300 hover:bg-slate-200 text-slate-900'
-                                }`}
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                            <span className="text-[11px] font-bold text-emerald-400">
-                              = {cardCount * tabletsPerCard} {selectedDispenseMed?.dosage_form || 'Tablets'}
+                {/* Active Ring-Up Item Details & Tactile Quantity Elements */}
+                {selectedDispenseMed ? (
+                  <div className="space-y-4 pt-1">
+                    
+                    {/* Item Ticket Banner */}
+                    <div className={`p-3 rounded-2xl border flex items-center justify-between gap-3 ${
+                      isDark ? 'bg-slate-950/80 border-slate-800' : 'bg-slate-50 border-slate-200'
+                    }`}>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-13 h-13 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-1 shrink-0 flex items-center justify-center overflow-hidden shadow-2xs">
+                          <img 
+                            src={getMedicineProductImage(selectedDispenseMed)} 
+                            alt={selectedDispenseMed.name} 
+                            className="w-full h-full object-contain" 
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={`font-black text-xs ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                              {selectedDispenseMed.name}
+                            </span>
+                            <span className="text-[10px] font-bold px-1.5 rounded bg-teal-500/20 text-teal-400">
+                              {selectedDispenseMed.dosage_form}
                             </span>
                           </div>
+                          <span className="text-[11px] text-slate-400 block truncate mt-0.5">
+                            {selectedDispenseMed.generic_name} • {selectedDispenseMed.strength || 'Standard'}
+                          </span>
+                          {selectedDispenseBatch && (
+                            <span className="font-mono text-[10px] text-teal-400 block mt-0.5">
+                              Lot: #{selectedDispenseBatch.batch_number} (Exp: {new Date(selectedDispenseBatch.expiry_date).toLocaleDateString()})
+                            </span>
+                          )}
                         </div>
-                      )}
+                      </div>
 
-                      {/* Mode: Loose Tablets */}
-                      {dispenseMode === 'loose' && (
+                      <div className="text-right shrink-0">
+                        <span className="text-[10px] text-slate-400 block uppercase font-bold">Rate</span>
+                        <span className="font-black text-sm text-emerald-400 font-mono">
+                          Rs. {liveUnitPrice.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Packaging Mode & Touch Quantity Elements */}
+                    <div className="space-y-3">
+                      
+                      {/* Tablets & Capsules Mode Switches */}
+                      {isTabletOrCapsule && (
                         <div className="space-y-3">
-                          <span className="text-[11px] text-slate-400 block">Quick Loose Tablet Presets:</span>
-                          <div className="flex flex-wrap gap-2">
-                            {[1, 2, 5, 10, 14, 20, 28, 30, 50].map((qty) => (
-                              <button
-                                key={qty}
-                                type="button"
-                                onClick={() => setLooseCount(qty)}
-                                className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                                  looseCount === qty
-                                    ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-md'
-                                    : isDark
-                                      ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
-                                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-                                }`}
-                              >
-                                {qty} {selectedDispenseMed?.dosage_form || 'Tab'}
-                              </button>
-                            ))}
-                          </div>
-
-                          <div className="flex items-center gap-2 pt-1">
-                            <span className="text-[11px] text-slate-400">Exact Loose Quantity:</span>
-                            <input
-                              type="number"
-                              min="1"
-                              value={looseCount}
-                              onChange={(e) => setLooseCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                              className={`w-24 p-2 rounded-xl font-bold font-mono text-xs border ${
-                                isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'
+                          <div className={`p-1 rounded-xl border flex gap-1 ${
+                            isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'
+                          }`}>
+                            <button
+                              type="button"
+                              onClick={() => setDispenseMode('card')}
+                              className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                dispenseMode === 'card'
+                                  ? 'bg-teal-500 text-slate-950 shadow-xs'
+                                  : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
                               }`}
-                            />
-                            <span className="text-[11px] text-slate-400">individual units</span>
+                            >
+                              By Card / Strip
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDispenseMode('loose')}
+                              className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                dispenseMode === 'loose'
+                                  ? 'bg-teal-500 text-slate-950 shadow-xs'
+                                  : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              Loose Tablets
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDispenseMode('pack')}
+                              className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                dispenseMode === 'pack'
+                                  ? 'bg-teal-500 text-slate-950 shadow-xs'
+                                  : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              Full Box
+                            </button>
                           </div>
-                        </div>
-                      )}
 
-                      {/* Mode: Full Pack */}
-                      {dispenseMode === 'pack' && (
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between text-[11px] text-slate-400">
-                            <span>Select Pack Count:</span>
-                            <div className="flex items-center gap-1">
-                              <span>Units per pack:</span>
-                              <input
-                                type="number"
-                                min="1"
-                                value={unitsPerPack}
-                                onChange={(e) => setUnitsPerPack(Math.max(1, parseInt(e.target.value, 10) || 30))}
-                                className={`w-14 px-1.5 py-0.5 rounded text-center font-bold border ${
-                                  isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'
-                                }`}
-                              />
+                          {/* Card Presets & Stepper */}
+                          {dispenseMode === 'card' && (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                                <span>Quick Cards Preset:</span>
+                                <div className="flex items-center gap-1">
+                                  <span>Tabs per card:</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="100"
+                                    value={tabletsPerCard}
+                                    onChange={(e) => setTabletsPerCard(Math.max(1, parseInt(e.target.value, 10) || 10))}
+                                    className={`w-12 px-1 rounded text-center font-bold border text-xs ${
+                                      isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'
+                                    }`}
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-5 gap-1.5">
+                                {[1, 2, 3, 5, 10].map((num) => (
+                                  <button
+                                    key={num}
+                                    type="button"
+                                    onClick={() => setCardCount(num)}
+                                    className={`py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
+                                      cardCount === num
+                                        ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-sm'
+                                        : isDark
+                                          ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
+                                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                                    }`}
+                                  >
+                                    {num} Card{num > 1 ? 's' : ''}
+                                  </button>
+                                ))}
+                              </div>
+
+                              {/* Stepper */}
+                              <div className="flex items-center justify-between pt-1">
+                                <span className="text-[11px] text-slate-400">Custom Cards:</span>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setCardCount(Math.max(1, cardCount - 1))}
+                                    className={`w-8 h-8 rounded-xl border flex items-center justify-center font-bold text-sm cursor-pointer ${
+                                      isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-white' : 'bg-slate-100 border-slate-300 hover:bg-slate-200 text-slate-900'
+                                    }`}
+                                  >
+                                    <Minus className="w-3.5 h-3.5" />
+                                  </button>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={cardCount}
+                                    onChange={(e) => setCardCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                                    className={`w-14 h-8 rounded-xl text-center font-bold text-xs border ${
+                                      isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'
+                                    }`}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setCardCount(cardCount + 1)}
+                                    className={`w-8 h-8 rounded-xl border flex items-center justify-center font-bold text-sm cursor-pointer ${
+                                      isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-white' : 'bg-slate-100 border-slate-300 hover:bg-slate-200 text-slate-900'
+                                    }`}
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Loose Presets & Stepper */}
+                          {dispenseMode === 'loose' && (
+                            <div className="space-y-2">
+                              <span className="text-[11px] text-slate-400 block">Quick Loose Tablets Preset:</span>
+                              <div className="flex flex-wrap gap-1.5">
+                                {[1, 2, 5, 10, 14, 20, 28, 30].map((qty) => (
+                                  <button
+                                    key={qty}
+                                    type="button"
+                                    onClick={() => setLooseCount(qty)}
+                                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                                      looseCount === qty
+                                        ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-sm'
+                                        : isDark
+                                          ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
+                                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                                    }`}
+                                  >
+                                    {qty} tabs
+                                  </button>
+                                ))}
+                              </div>
+
+                              <div className="flex items-center justify-between pt-1">
+                                <span className="text-[11px] text-slate-400">Custom Loose Count:</span>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setLooseCount(Math.max(1, looseCount - 1))}
+                                    className={`w-8 h-8 rounded-xl border flex items-center justify-center font-bold text-sm cursor-pointer ${
+                                      isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-white' : 'bg-slate-100 border-slate-300 hover:bg-slate-200 text-slate-900'
+                                    }`}
+                                  >
+                                    <Minus className="w-3.5 h-3.5" />
+                                  </button>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={looseCount}
+                                    onChange={(e) => setLooseCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                                    className={`w-16 h-8 rounded-xl text-center font-bold text-xs border ${
+                                      isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'
+                                    }`}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setLooseCount(looseCount + 1)}
+                                    className={`w-8 h-8 rounded-xl border flex items-center justify-center font-bold text-sm cursor-pointer ${
+                                      isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-white' : 'bg-slate-100 border-slate-300 hover:bg-slate-200 text-slate-900'
+                                    }`}
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Full Pack Mode */}
+                          {dispenseMode === 'pack' && (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                                <span>Packs:</span>
+                                <div className="flex items-center gap-1">
+                                <span>Units/pack:</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={unitsPerPack}
+                                  onChange={(e) => setUnitsPerPack(Math.max(1, parseInt(e.target.value, 10) || 30))}
+                                  className={`w-12 px-1 rounded text-center font-bold border text-xs ${
+                                    isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'
+                                  }`}
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-4 gap-1.5">
+                              {[1, 2, 3, 5].map((pk) => (
+                                <button
+                                  key={pk}
+                                  type="button"
+                                  onClick={() => setPackCount(pk)}
+                                  className={`py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
+                                    packCount === pk
+                                      ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-sm'
+                                      : isDark
+                                        ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
+                                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                                  }`}
+                                >
+                                  {pk} Pack{pk > 1 ? 's' : ''}
+                                </button>
+                              ))}
                             </div>
                           </div>
-
-                          <div className="grid grid-cols-4 gap-2">
-                            {[1, 2, 3, 5].map((pk) => (
-                              <button
-                                key={pk}
-                                type="button"
-                                onClick={() => setPackCount(pk)}
-                                className={`py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
-                                  packCount === pk
-                                    ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-md'
-                                    : isDark
-                                      ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
-                                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-                                }`}
-                              >
-                                {pk} Pack{pk > 1 ? 's' : ''} ({pk * unitsPerPack} units)
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* CASE B: SYRUP / LIQUIDS / DROPS */}
-                  {isLiquidOrSyrup && (
-                    <div className="space-y-3">
-                      <span className="text-[11px] text-slate-400 block">Select Bottle / Container Count:</span>
-                      <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                        {[1, 2, 3, 4, 5].map((btl) => (
-                          <button
-                            key={btl}
-                            type="button"
-                            onClick={() => setBottleCount(btl)}
-                            className={`py-3 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
-                              bottleCount === btl
-                                ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-md'
-                                : isDark
-                                  ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
-                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-                            }`}
-                          >
-                            {btl} Bottle{btl > 1 ? 's' : ''}
-                          </button>
-                        ))}
-                      </div>
-
-                      <div className="flex items-center gap-2 pt-1">
-                        <span className="text-[11px] text-slate-400">Custom Bottle Count:</span>
-                        <input
-                          type="number"
-                          min="1"
-                          value={bottleCount}
-                          onChange={(e) => setBottleCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                          className={`w-20 p-2 rounded-xl font-bold font-mono text-xs border ${
-                            isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'
-                          }`}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* CASE C: INJECTIONS / AMPOULES */}
-                  {isInjection && (
-                    <div className="space-y-3">
-                      <span className="text-[11px] text-slate-400 block">Select Vial / Ampoule Count:</span>
-                      <div className="grid grid-cols-4 gap-2">
-                        {[1, 2, 5, 10].map((v) => (
-                          <button
-                            key={v}
-                            type="button"
-                            onClick={() => setVialCount(v)}
-                            className={`py-3 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
-                              vialCount === v
-                                ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-md'
-                                : isDark
-                                  ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
-                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-                            }`}
-                          >
-                            {v} Vial{v > 1 ? 's' : ''}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* CASE D: CREAMS & OINTMENTS */}
-                  {isTopical && (
-                    <div className="space-y-3">
-                      <span className="text-[11px] text-slate-400 block">Select Tube Count:</span>
-                      <div className="grid grid-cols-3 gap-2">
-                        {[1, 2, 3].map((tb) => (
-                          <button
-                            key={tb}
-                            type="button"
-                            onClick={() => setTubeCount(tb)}
-                            className={`py-3 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
-                              tubeCount === tb
-                                ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-md'
-                                : isDark
-                                  ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
-                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-                            }`}
-                          >
-                            {tb} Tube{tb > 1 ? 's' : ''}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* CASE E: INHALERS */}
-                  {isInhaler && (
-                    <div className="space-y-3">
-                      <span className="text-[11px] text-slate-400 block">Select Canister Count:</span>
-                      <div className="grid grid-cols-2 gap-2">
-                        {[1, 2].map((inh) => (
-                          <button
-                            key={inh}
-                            type="button"
-                            onClick={() => setInhalerCount(inh)}
-                            className={`py-3 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
-                              inhalerCount === inh
-                                ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-md'
-                                : isDark
-                                  ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
-                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-                            }`}
-                          >
-                            {inh} Canister{inh > 1 ? 's' : ''}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* CASE F: OTHER GENERIC FORMS */}
-                  {!isTabletOrCapsule && !isLiquidOrSyrup && !isInjection && !isTopical && !isInhaler && (
-                    <div className="space-y-3">
-                      <span className="text-[11px] text-slate-400 block">Select Quantity to Dispense:</span>
-                      <div className="flex flex-wrap gap-2">
-                        {[1, 2, 3, 5, 10].map((q) => (
-                          <button
-                            key={q}
-                            type="button"
-                            onClick={() => setLooseCount(q)}
-                            className={`px-4 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                              looseCount === q
-                                ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-md'
-                                : isDark
-                                  ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
-                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-                            }`}
-                          >
-                            {q} Units
-                          </button>
-                        ))}
-                      </div>
-                      <div className="flex items-center gap-2 pt-1">
-                        <span className="text-[11px] text-slate-400">Custom Count:</span>
-                        <input
-                          type="number"
-                          min="1"
-                          value={looseCount}
-                          onChange={(e) => setLooseCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                          className={`w-20 p-2 rounded-xl font-bold font-mono text-xs border ${
-                            isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'
-                          }`}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                </div>
-              )}
-
-              {/* STEP 5: PATIENT & PRESCRIPTION DETAILS */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-800/40">
-                <div>
-                  <label className={`font-bold block mb-1.5 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                    Patient / Customer Full Name
-                  </label>
-                  <div className="relative">
-                    <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={patientName}
-                      onChange={(e) => setPatientName(e.target.value)}
-                      placeholder="e.g. Kasun Fernando (or leave blank for Walk-in)"
-                      className={`w-full pl-9 pr-3 py-2.5 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
-                        isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
-                      }`}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className={`font-bold block mb-1.5 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                    Doctor's Prescription Ref / SLMC #
-                  </label>
-                  <div className="relative">
-                    <FileText className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={prescriptionRef}
-                      onChange={(e) => setPrescriptionRef(e.target.value)}
-                      placeholder="e.g. RX-2026-904 (or OTC)"
-                      className={`w-full pl-9 pr-3 py-2.5 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
-                        isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
-                      }`}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* STEP 6: LIVE CALCULATION SUMMARY & DISPENSE TRIGGER */}
-              {selectedDispenseMed && selectedDispenseBatch && (
-                <div className={`p-4 rounded-2xl border space-y-3 ${
-                  isDark ? 'bg-slate-950/90 border-slate-800' : 'bg-slate-50 border-slate-300'
-                }`}>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
-                    <div className="p-2.5 rounded-xl bg-white border border-slate-200 shadow-xs">
-                      <span className="text-[10px] text-slate-500 block font-semibold">Packaging Unit</span>
-                      <span className="font-bold text-xs text-teal-700 mt-0.5 block truncate">
-                        {packagingDescription}
-                      </span>
-                    </div>
-
-                    <div className="p-2.5 rounded-xl bg-white border border-slate-200 shadow-xs">
-                      <span className="text-[10px] text-slate-500 block font-semibold">Deduction Units</span>
-                      <span className="font-bold text-xs text-slate-900 mt-0.5 block font-mono">
-                        {calculatedDispenseUnits} units
-                      </span>
-                    </div>
-
-                    <div className="p-2.5 rounded-xl bg-white border border-slate-200 shadow-xs">
-                      <span className="text-[10px] text-slate-500 block font-semibold">Rate per Unit</span>
-                      <span className="font-bold text-xs text-slate-700 mt-0.5 block font-mono">
-                        Rs. {Number(selectedDispenseBatch.unit_price || selectedDispenseMed.unit_price || 0).toFixed(2)}
-                      </span>
-                    </div>
-
-                    <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 shadow-xs">
-                      <span className="text-[10px] text-emerald-800 block font-bold">Payable Counter Bill</span>
-                      <span className="font-black text-sm text-emerald-700 mt-0.5 block font-mono">
-                        Rs. {Number((selectedDispenseBatch.unit_price || selectedDispenseMed.unit_price || 0) * calculatedDispenseUnits).toFixed(2)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Stock validation warning */}
-                  {calculatedDispenseUnits > selectedDispenseBatch.stock_quantity ? (
-                    <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0" />
-                      <span>
-                        <strong>Cannot dispense:</strong> Requested {calculatedDispenseUnits} units exceeds available lot stock ({selectedDispenseBatch.stock_quantity} units).
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
-                      <span>Stock remaining in lot after dispense:</span>
-                      <strong className="text-emerald-400 font-mono">
-                        {selectedDispenseBatch.stock_quantity - calculatedDispenseUnits} units remaining
-                      </strong>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  disabled={
-                    dispenseLoading || 
-                    !dispenseBatchId || 
-                    (selectedDispenseBatch && calculatedDispenseUnits > selectedDispenseBatch.stock_quantity)
-                  }
-                  className="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <Receipt className="w-4 h-4 stroke-[2.5]" />
-                  <span>
-                    {dispenseLoading 
-                      ? 'Dispensing Transaction...' 
-                      : `Confirm & Dispense ${packagingDescription}`
-                    }
-                  </span>
-                </button>
-              </div>
-
-            </form>
-          </div>
-
-          {/* Right Col: Instant Dispense Receipt Voucher & Pharmacist Protocol */}
-          <div className="space-y-6">
-            <div className={`p-6 rounded-3xl border space-y-4 ${
-              isDark ? 'bg-slate-900/70 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
-            }`}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className={`text-sm sm:text-base font-black uppercase tracking-wider flex items-center gap-2 ${
-                    isDark ? 'text-white' : 'text-slate-950'
-                  }`}>
-                    <Receipt className="w-5 h-5 text-emerald-500 stroke-[2.5]" />
-                    Dispensary Receipt Voucher
-                  </h3>
-                  <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-                    Official counter prescription billing slip
-                  </span>
-                </div>
-
-                {dispenseSuccess ? (
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setDispenseSuccess(null)}
-                      className="px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer transition-colors"
-                    >
-                      New Bill
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handlePrintReceiptSlip(dispenseSuccess)}
-                      className="px-3.5 py-1.5 rounded-xl text-xs font-black bg-emerald-500 text-slate-950 hover:bg-emerald-400 flex items-center gap-1.5 cursor-pointer shadow-md transition-all"
-                      title="Print compact receipt slip"
-                    >
-                      <Printer className="w-4 h-4 stroke-[2.5]" />
-                      <span>Print Slip</span>
-                    </button>
-                  </div>
-                ) : selectedDispenseMed && selectedDispenseBatch ? (
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handlePrintReceiptSlip(null)}
-                      className="px-3 py-1.5 rounded-xl text-xs font-bold border border-teal-500/40 text-teal-600 dark:text-teal-400 hover:bg-teal-500/10 flex items-center gap-1.5 cursor-pointer transition-colors"
-                      title="Print draft receipt slip"
-                    >
-                      <Printer className="w-3.5 h-3.5 stroke-[2]" />
-                      <span>Print Draft</span>
-                    </button>
-                    <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-teal-500/15 text-teal-700 dark:text-teal-300 border border-teal-500/30">
-                      Live Bill Active
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-
-              {/* SCENARIO 1: CONFIRMED DISPENSED VOUCHER */}
-              {dispenseSuccess ? (
-                <div className="space-y-3">
-                  <div className={`p-3 rounded-xl border text-xs font-bold flex flex-wrap items-center justify-between gap-2 ${
-                    isDark ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300' : 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                  }`}>
-                    <span className="flex items-center gap-1.5">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                      <span>Bill passed to print side! Counter form is ready for next bill.</span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handlePrintReceiptSlip(dispenseSuccess)}
-                      className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs cursor-pointer flex items-center gap-1 shadow-sm transition-all"
-                    >
-                      <Printer className="w-3.5 h-3.5" />
-                      <span>Print Slip</span>
-                    </button>
-                  </div>
-
-                  <div
-                    id="printable-receipt-card"
-                    className={`p-6 rounded-2xl border-2 space-y-4 text-sm ${
-                      isDark
-                        ? 'bg-slate-950 border-emerald-500/50 text-white shadow-xl'
-                        : 'bg-white border-emerald-600/40 text-slate-950 shadow-md'
-                    }`}
-                  >
-                  <div className="text-center border-b-2 border-dashed border-slate-300 dark:border-slate-700 pb-4">
-                    <span className="font-black text-lg sm:text-xl block tracking-wide text-emerald-600 dark:text-emerald-400">
-                      VDC STORE PHARMACY
-                    </span>
-                    <span className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 block mt-0.5">
-                      124 Galle Road, Bambalapitiya
-                    </span>
-                    <span className="text-xs font-medium text-slate-600 dark:text-slate-400 block mt-0.5">
-                      {dispenseSuccess.date}
-                    </span>
-                    <span className="inline-block mt-2 px-3 py-1 rounded-full text-xs font-black bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-2 border-emerald-500 uppercase tracking-wider">
-                      ✓ PAID & DISPENSED
-                    </span>
-                  </div>
-
-                  <div className="space-y-2.5 text-xs sm:text-sm">
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Patient Name:</span>
-                      <span className="font-black text-sm text-slate-950 dark:text-white">{dispenseSuccess.patientName}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Doctor Rx Ref:</span>
-                      <span className="font-extrabold text-slate-900 dark:text-slate-200">{dispenseSuccess.prescriptionRef}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Medication:</span>
-                      <span className="font-black text-sm text-emerald-700 dark:text-emerald-400">{dispenseSuccess.medicineName}</span>
-                    </div>
-                    {dispenseSuccess.genericName && (
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="font-semibold text-slate-500 dark:text-slate-400">Generic:</span>
-                        <span className="font-medium text-slate-700 dark:text-slate-300">{dispenseSuccess.genericName}</span>
+                        )}
                       </div>
                     )}
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Lot / Batch #:</span>
-                      <span className="font-mono font-bold text-teal-700 dark:text-teal-300">{dispenseSuccess.batchNumber}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Packaging:</span>
-                      <span className="font-black text-slate-950 dark:text-white bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
-                        {dispenseSuccess.packagingSummary}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Units Deducted:</span>
-                      <span className="font-extrabold text-slate-950 dark:text-white">{dispenseSuccess.quantity} units</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Unit Price:</span>
-                      <span className="font-extrabold text-slate-900 dark:text-slate-200">Rs. {Number(dispenseSuccess.unitPrice).toFixed(2)}</span>
-                    </div>
-                    
-                    <div className="flex justify-between items-center border-t-2 border-slate-900 dark:border-slate-600 pt-3 mt-2">
-                      <span className="text-sm sm:text-base font-black text-slate-950 dark:text-white">TOTAL PAID:</span>
-                      <span className="text-xl sm:text-2xl font-black text-emerald-600 dark:text-emerald-400 font-mono">
-                        Rs. {Number(dispenseSuccess.totalBill).toFixed(2)}
-                      </span>
-                    </div>
+
+                    {/* Syrups & Liquids */}
+                    {isLiquidOrSyrup && (
+                      <div className="space-y-2">
+                        <span className="text-[11px] text-slate-400 block">Select Bottle Count:</span>
+                        <div className="grid grid-cols-5 gap-1.5">
+                          {[1, 2, 3, 4, 5].map((btl) => (
+                            <button
+                              key={btl}
+                              type="button"
+                              onClick={() => setBottleCount(btl)}
+                              className={`py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
+                                bottleCount === btl
+                                  ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-sm'
+                                  : isDark
+                                    ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
+                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                              }`}
+                            >
+                              {btl} Bottle{btl > 1 ? 's' : ''}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Injections & Vials */}
+                    {isInjection && (
+                      <div className="space-y-2">
+                        <span className="text-[11px] text-slate-400 block">Select Vial / Ampoule Count:</span>
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {[1, 2, 5, 10].map((v) => (
+                            <button
+                              key={v}
+                              type="button"
+                              onClick={() => setVialCount(v)}
+                              className={`py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
+                                vialCount === v
+                                  ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-sm'
+                                  : isDark
+                                    ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
+                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                              }`}
+                            >
+                              {v} Vial{v > 1 ? 's' : ''}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Creams & Topicals */}
+                    {isTopical && (
+                      <div className="space-y-2">
+                        <span className="text-[11px] text-slate-400 block">Select Tube Count:</span>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {[1, 2, 3].map((tb) => (
+                            <button
+                              key={tb}
+                              type="button"
+                              onClick={() => setTubeCount(tb)}
+                              className={`py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
+                                tubeCount === tb
+                                  ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-sm'
+                                  : isDark
+                                    ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
+                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                              }`}
+                            >
+                              {tb} Tube{tb > 1 ? 's' : ''}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Inhalers */}
+                    {isInhaler && (
+                      <div className="space-y-2">
+                        <span className="text-[11px] text-slate-400 block">Select Canister Count:</span>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {[1, 2].map((inh) => (
+                            <button
+                              key={inh}
+                              type="button"
+                              onClick={() => setInhalerCount(inh)}
+                              className={`py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
+                                inhalerCount === inh
+                                  ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-sm'
+                                  : isDark
+                                    ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
+                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                              }`}
+                            >
+                              {inh} Canister{inh > 1 ? 's' : ''}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Other Forms */}
+                    {!isTabletOrCapsule && !isLiquidOrSyrup && !isInjection && !isTopical && !isInhaler && (
+                      <div className="space-y-2">
+                        <span className="text-[11px] text-slate-400 block">Select Quantity:</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {[1, 2, 3, 5, 10].map((q) => (
+                            <button
+                              key={q}
+                              type="button"
+                              onClick={() => setLooseCount(q)}
+                              className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                                looseCount === q
+                                  ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-sm'
+                                  : isDark
+                                    ? 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
+                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                              }`}
+                            >
+                              {q} Units
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                   </div>
 
-                  <div className="text-center pt-3 border-t border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Dispensed by Pharmacist: <strong className="text-slate-950 dark:text-white font-black">{staffUser?.fullName || 'Licensed Pharmacist'}</strong>
+                  {/* Stock Validation Check & Calculation Summary Card */}
+                  <div className={`p-3.5 rounded-2xl border space-y-2 ${
+                    isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400">Packaging Format:</span>
+                      <strong className="text-teal-400 truncate max-w-[200px]">{packagingDescription}</strong>
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400">Total Deducted Units:</span>
+                      <strong className={`font-mono ${isDark ? 'text-white' : 'text-slate-900'}`}>{calculatedDispenseUnits} units</strong>
+                    </div>
+
+                    {selectedDispenseBatch && (
+                      calculatedDispenseUnits > selectedDispenseBatch.stock_quantity ? (
+                        <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-[11px] flex items-center gap-1.5">
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                          <span>Requested ({calculatedDispenseUnits}) exceeds lot stock ({selectedDispenseBatch.stock_quantity}).</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between text-[11px] text-slate-400">
+                          <span>Remaining in lot:</span>
+                          <strong className="text-emerald-400 font-mono">
+                            {selectedDispenseBatch.stock_quantity - calculatedDispenseUnits} units
+                          </strong>
+                        </div>
+                      )
+                    )}
                   </div>
 
-                  <div className="pt-2">
-                    <button
-                      type="button"
-                      onClick={() => handlePrintReceiptSlip(dispenseSuccess)}
-                      className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
-                    >
-                      <Printer className="w-4 h-4 stroke-[2.5]" />
-                      <span>Print Receipt Slip Only</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-              ) : selectedDispenseMed && selectedDispenseBatch ? (
-                /* SCENARIO 2: LIVE DRAFT BILL GENERATION (ACTIVE WHILE MAKING IT) */
-                <div
-                  id="printable-receipt-card"
-                  className={`p-6 rounded-2xl border-2 space-y-4 text-sm ${
-                    isDark
-                      ? 'bg-slate-950 border-teal-500/40 text-white shadow-xl'
-                      : 'bg-white border-teal-600/40 text-slate-950 shadow-md'
-                  }`}
-                >
-                  <div className="text-center border-b-2 border-dashed border-slate-300 dark:border-slate-700 pb-4">
-                    <span className="font-black text-lg sm:text-xl block tracking-wide text-emerald-600 dark:text-emerald-400">
-                      VDC STORE PHARMACY
+                  {/* Live Total Bill */}
+                  <div className={`p-4 rounded-2xl border text-center ${
+                    isDark ? 'bg-emerald-950/20 border-emerald-500/30' : 'bg-emerald-50 border-emerald-200'
+                  }`}>
+                    <span className="text-[11px] uppercase tracking-wider font-bold text-slate-400 block">
+                      Total Amount Payable
                     </span>
-                    <span className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 block mt-0.5">
-                      124 Galle Road, Bambalapitiya
-                    </span>
-                    <span className="text-xs font-medium text-slate-600 dark:text-slate-400 block mt-0.5">
-                      {new Date().toLocaleString()}
-                    </span>
-                    <span className="inline-block mt-2 px-3 py-1 rounded-full text-xs font-black bg-teal-100 dark:bg-teal-950/60 text-teal-800 dark:text-teal-300 border-2 border-teal-500 uppercase tracking-wider">
-                      COUNTER BILL (READY TO DISPENSE)
+                    <span className="text-2xl sm:text-3xl font-black text-emerald-400 font-mono block mt-0.5">
+                      Rs. {liveTotalBill.toFixed(2)}
                     </span>
                   </div>
 
-                  <div className="space-y-2.5 text-xs sm:text-sm">
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Patient Name:</span>
-                      <span className="font-black text-sm text-slate-950 dark:text-white">{patientName || 'Walk-in Customer'}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Doctor Rx Ref:</span>
-                      <span className="font-extrabold text-slate-900 dark:text-slate-200">{prescriptionRef || 'OTC-Walk-in'}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Medication:</span>
-                      <span className="font-black text-sm text-teal-700 dark:text-teal-300">{selectedDispenseMed.name}</span>
-                    </div>
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="font-semibold text-slate-500 dark:text-slate-400">Form & Strength:</span>
-                      <span className="font-medium text-slate-700 dark:text-slate-300">
-                        {selectedDispenseMed.dosage_form} {selectedDispenseMed.strength ? `(${selectedDispenseMed.strength})` : ''}
+                  {/* Payment Method Selector (Pay by Cash default, or Card) */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px] font-bold">
+                      <span className={isDark ? 'text-slate-300' : 'text-slate-700'}>Payment Method</span>
+                      <span className="text-[10px] text-teal-400 font-mono">
+                        {dispensePaymentMethod === 'CASH' ? 'Cash Counter' : 'Card Terminal'}
                       </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Lot / Batch #:</span>
-                      <span className="font-mono font-bold text-teal-700 dark:text-teal-300">{selectedDispenseBatch.batch_number}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Packaging:</span>
-                      <span className="font-black text-slate-950 dark:text-white bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
-                        {packagingDescription}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Total Units:</span>
-                      <span className="font-extrabold text-slate-950 dark:text-white">{calculatedDispenseUnits} units</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Rate / Unit:</span>
-                      <span className="font-extrabold text-slate-900 dark:text-slate-200">Rs. {liveUnitPrice.toFixed(2)}</span>
                     </div>
 
-                    <div className="flex justify-between items-center border-t-2 border-slate-200 pt-3 mt-2">
-                      <span className="text-sm sm:text-base font-black text-slate-900">TOTAL BILL:</span>
-                      <span className="text-xl sm:text-2xl font-black text-emerald-600 font-mono">
-                        Rs. {liveTotalBill.toFixed(2)}
-                      </span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        id="pos-pay-cash-btn"
+                        onClick={() => setDispensePaymentMethod('CASH')}
+                        className={`py-2.5 px-3 rounded-2xl border text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                          dispensePaymentMethod === 'CASH'
+                            ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/20 font-black'
+                            : isDark
+                              ? 'bg-slate-950 hover:bg-slate-800 text-slate-400 border-slate-800'
+                              : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
+                        }`}
+                      >
+                        <Banknote className="w-4 h-4 stroke-[2.4]" />
+                        <span>Cash (Default)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        id="pos-pay-card-btn"
+                        onClick={() => setDispensePaymentMethod('CARD')}
+                        className={`py-2.5 px-3 rounded-2xl border text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                          dispensePaymentMethod === 'CARD'
+                            ? 'bg-gradient-to-r from-sky-500 to-indigo-500 text-white border-sky-400 shadow-md shadow-sky-500/20 font-black'
+                            : isDark
+                              ? 'bg-slate-950 hover:bg-slate-800 text-slate-400 border-slate-800'
+                              : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
+                        }`}
+                      >
+                        <CreditCard className="w-4 h-4 stroke-[2.4]" />
+                        <span>Pay by Card</span>
+                      </button>
                     </div>
                   </div>
 
-                  <div className="pt-2 flex flex-col gap-2">
-                    <button
-                      type="button"
-                      onClick={handleQuickDispense}
-                      disabled={dispenseLoading || calculatedDispenseUnits > selectedDispenseBatch.stock_quantity}
-                      className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-900 font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md disabled:opacity-40"
-                    >
-                      <Receipt className="w-4 h-4 stroke-[2.5]" />
-                      <span>{dispenseLoading ? 'Dispensing...' : `Confirm & Dispense (Rs. ${liveTotalBill.toFixed(2)})`}</span>
-                    </button>
+                  {/* Checkout Button */}
+                  <button
+                    type="button"
+                    onClick={handleQuickDispense}
+                    disabled={
+                      dispenseLoading || 
+                       !dispenseBatchId || 
+                      (selectedDispenseBatch && calculatedDispenseUnits > selectedDispenseBatch.stock_quantity)
+                    }
+                    className="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Receipt className="w-4 h-4 stroke-[2.5]" />
+                    <span>
+                      {dispenseLoading 
+                        ? 'Dispensing Transaction...' 
+                        : `Confirm & Dispense (${dispensePaymentMethod === 'CARD' ? 'CARD' : 'CASH'} • Rs. ${liveTotalBill.toFixed(2)})`
+                      }
+                    </span>
+                  </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handlePrintReceiptSlip(null)}
-                      className="w-full py-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-800 font-bold text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Printer className="w-3.5 h-3.5" />
-                      <span>Print Draft Slip Only</span>
-                    </button>
-                  </div>
                 </div>
               ) : (
-                /* SCENARIO 3: NO MEDICATION CHOSEN YET */
-                <div className="py-12 text-center text-sm text-slate-500 space-y-3">
-                  <div className="w-14 h-14 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center mx-auto">
-                    <Receipt className="w-7 h-7" />
+                /* Empty state when no item selected */
+                <div className="py-12 text-center text-slate-500 space-y-3">
+                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto ${
+                    isDark ? 'bg-slate-950 text-slate-600' : 'bg-slate-100 text-slate-400'
+                  }`}>
+                    <ShoppingBag className="w-7 h-7" />
                   </div>
-                  <p className="font-black text-base text-slate-800">Bill Voucher Generator</p>
-                  <p className="text-xs font-medium leading-relaxed max-w-xs mx-auto text-slate-600">
-                    Select a medicine formulation in Steps 1 & 2 to automatically generate and calculate the prescription counter bill voucher here.
-                  </p>
+                  <div>
+                    <p className={`font-black text-sm ${isDark ? 'text-slate-300' : 'text-slate-800'}`}>
+                      No Item Selected
+                    </p>
+                    <p className="text-xs text-slate-400 max-w-xs mx-auto mt-1">
+                      Tap any medicine tile from the catalog on the left to start prescription ring-up.
+                    </p>
+                  </div>
                 </div>
               )}
+
             </div>
 
-            {/* Dispensary Guidelines Card */}
-            <div className="p-5 rounded-2xl border text-xs space-y-2.5 bg-slate-50 border-slate-200 text-slate-600">
-              <span className="font-bold text-teal-700 flex items-center gap-1.5 text-xs">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                Dispensing Protocol & Packaging Guide
-              </span>
-              <ul className="space-y-1.5 text-[11px] leading-relaxed list-disc list-inside">
-                <li><strong className="text-slate-800">Blister Cards:</strong> Standard blister strips contain 10 tablets. Use quick presets for 1, 2, 3, 4, 5 cards.</li>
-                <li><strong className="text-slate-800">Liquids & Syrups:</strong> Dispensed in unopened whole bottles with measuring spoons/droppers.</li>
-                <li><strong className="text-slate-800">FEFO Policy:</strong> System automatically selects the earliest expiring lot to prevent inventory spoilage.</li>
-              </ul>
-            </div>
+            {/* Receipt Voucher / Confirmation Area */}
+            {dispenseSuccess && (
+              <div className={`p-5 rounded-3xl border-2 space-y-4 text-xs animate-in fade-in duration-200 ${
+                isDark ? 'bg-slate-950 border-emerald-500/40 text-white' : 'bg-white border-emerald-600/40 text-slate-900 shadow-md'
+              }`}>
+                <div className="flex items-center justify-between pb-3 border-b border-emerald-500/20">
+                  <div className="flex items-center gap-1.5 text-emerald-400 font-bold">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Sale Dispensed & Recorded</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDispenseSuccess(null)}
+                    className="px-2.5 py-1 rounded-lg border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800 text-[11px] font-bold cursor-pointer"
+                  >
+                    Next Customer
+                  </button>
+                </div>
+
+                <div className="text-center space-y-1">
+                  <span className="font-black text-base text-emerald-400 block">
+                    MY PHARMACIST DISPENSARY
+                  </span>
+                  <span className="text-[11px] text-slate-400 block">
+                    Invoice: <strong className="font-mono text-emerald-400">{dispenseSuccess.invoiceNumber}</strong>
+                  </span>
+                  <span className="text-[11px] text-slate-400 block">
+                    {dispenseSuccess.date}
+                  </span>
+                </div>
+
+                <div className="space-y-1.5 py-2 border-y border-dashed border-slate-800">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Patient:</span>
+                    <strong className={isDark ? 'text-white' : 'text-slate-900'}>{dispenseSuccess.patientName}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Doctor Rx:</span>
+                    <span className={`font-mono ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{dispenseSuccess.prescriptionRef}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Medication:</span>
+                    <strong className="text-teal-400">{dispenseSuccess.medicineName}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Lot / Batch:</span>
+                    <span className={`font-mono ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>#{dispenseSuccess.batchNumber}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Packaging:</span>
+                    <span className={`font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{dispenseSuccess.packagingSummary}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Units Deducted:</span>
+                    <span className={`font-mono ${isDark ? 'text-white' : 'text-slate-900'}`}>{dispenseSuccess.quantity} units</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Payment Mode:</span>
+                    <span className={`px-2 py-0.5 rounded font-mono font-bold text-[10px] uppercase ${
+                      dispenseSuccess.paymentMethod === 'CARD'
+                        ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
+                        : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    }`}>
+                      {dispenseSuccess.paymentMethod || 'CASH'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between pt-1 border-t border-slate-800 text-sm">
+                    <span className="font-bold">TOTAL PAID:</span>
+                    <strong className="text-emerald-400 font-mono font-black">
+                      Rs. {Number(dispenseSuccess.totalBill).toFixed(2)}
+                    </strong>
+                  </div>
+                </div>
+
+                <div className="pt-1 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handlePrintReceiptSlip(dispenseSuccess)}
+                    className="flex-1 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-md transition-all"
+                  >
+                    <Printer className="w-4 h-4 stroke-[2.4]" />
+                    <span>Print Receipt Slip</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDispenseSuccess(null)}
+                    className="px-4 py-2.5 rounded-xl border border-slate-700 text-slate-300 hover:text-white font-bold text-xs cursor-pointer"
+                  >
+                    New Bill
+                  </button>
+                </div>
+              </div>
+            )}
+
           </div>
 
         </div>
-        )
-      )}
+
+      </div>
+    )}
 
       {/* TAB 3: MEDICINES CATALOG MASTER */}
       {activeTab === 'medicines' && (
@@ -3705,6 +4265,41 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
             </div>
           </div>
 
+          {/* Quick Offer & Stock Filters */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1">
+                Filter:
+              </span>
+              {[
+                { id: 'all', label: `All Formulations (${medicines.length})` },
+                { id: 'offers', label: `🔥 Active Offers (${medicines.filter(m => m.is_offer && Number(m.discount_percent) > 0).length})`, isHighlight: true },
+                { id: 'regular', label: `Regular Pricing (${medicines.filter(m => !m.is_offer || Number(m.discount_percent) <= 0).length})` }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setMedOfferFilter(tab.id)}
+                  className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                    medOfferFilter === tab.id
+                      ? tab.isHighlight 
+                        ? 'bg-rose-500 text-white border-rose-400 shadow-sm'
+                        : 'bg-teal-600 text-white border-teal-500 shadow-sm'
+                      : isDark
+                        ? 'bg-slate-950 text-slate-400 hover:text-white border-slate-800'
+                        : 'bg-slate-50 text-slate-600 hover:text-slate-900 border-slate-200'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-[11px] text-slate-400 font-medium">
+              Showing <strong className={isDark ? 'text-white' : 'text-slate-900'}>{filteredMeds.length}</strong> items
+            </div>
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className={`border-b uppercase tracking-wider text-[10px] font-bold ${
@@ -3718,8 +4313,8 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                   <th className="py-3 px-3">Category</th>
                   <th className="py-3 px-3">Form & Strength</th>
                   <th className="py-3 px-3">Available Stock</th>
-                  <th className="py-3 px-3">Threshold</th>
                   <th className="py-3 px-3">Unit Price</th>
+                  <th className="py-3 px-3">Offer Status</th>
                   <th className="py-3 px-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -3729,7 +4324,19 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                 {filteredMeds.map((m) => (
                   <tr key={m.medicine_id} className={isDark ? 'hover:bg-slate-850/40' : 'hover:bg-slate-50'}>
                     <td className="py-3 px-3 font-mono text-slate-400">#{m.medicine_id}</td>
-                    <td className={`py-3 px-3 font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{m.name}</td>
+                    <td className={`py-3 px-3 font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-0.5 shrink-0 overflow-hidden flex items-center justify-center shadow-2xs">
+                          <img 
+                            src={getMedicineProductImage(m)} 
+                            alt={m.name} 
+                            className="w-full h-full object-contain" 
+                            loading="lazy" 
+                          />
+                        </div>
+                        <span>{m.name}</span>
+                      </div>
+                    </td>
                     <td className="py-3 px-3 italic text-slate-400">{m.generic_name}</td>
                     <td className="py-3 px-3">{m.brand_name}</td>
                     <td className="py-3 px-3 text-teal-500 font-medium">{m.category_name}</td>
@@ -3743,21 +4350,63 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                         {m.total_saleable_stock} units
                       </span>
                     </td>
-                    <td className="py-3 px-3 text-slate-400">{m.low_stock_threshold}</td>
                     <td className="py-3 px-3 font-mono font-bold text-emerald-500">
                       Rs. {Number(m.unit_price).toFixed(2)}
                     </td>
+                    <td className="py-3 px-3">
+                      {m.is_offer && Number(m.discount_percent) > 0 ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex items-center gap-1 shadow-2xs">
+                            <Flame className="w-3 h-3 text-rose-500 animate-pulse" />
+                            <span>-{Number(m.discount_percent)}% OFF</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenOfferModal(m)}
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold cursor-pointer transition-colors ${
+                              isDark ? 'bg-slate-800 hover:bg-slate-700 text-teal-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                            }`}
+                            title="Edit discount rate or deactivate offer"
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenOfferModal(m)}
+                          className="px-2.5 py-1 rounded-lg text-[10px] font-bold border border-dashed border-slate-300 dark:border-slate-700 text-slate-400 hover:border-amber-400 hover:text-amber-500 dark:hover:text-amber-400 transition-colors cursor-pointer inline-flex items-center gap-1"
+                        >
+                          <Plus className="w-2.5 h-2.5" />
+                          <span>Make Offer</span>
+                        </button>
+                      )}
+                    </td>
                     <td className="py-3 px-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenEditMedicine(m)}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer inline-flex items-center gap-1 ${
-                          isDark ? 'bg-slate-800 hover:bg-slate-700 text-teal-300' : 'bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200'
-                        }`}
-                      >
-                        <Edit className="w-3 h-3" />
-                        <span>Edit</span>
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenOfferModal(m)}
+                          className={`p-1.5 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
+                            m.is_offer 
+                              ? 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20' 
+                              : isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                          }`}
+                          title="Configure Promotional Offer"
+                        >
+                          <Flame className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditMedicine(m)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer inline-flex items-center gap-1 ${
+                            isDark ? 'bg-slate-800 hover:bg-slate-700 text-teal-300' : 'bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200'
+                          }`}
+                        >
+                          <Edit className="w-3 h-3" />
+                          <span>Edit</span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -3811,7 +4460,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
           </div>
 
           {/* Expired Stock Emergency Action Banner */}
-          {expiredBatchesCount > 0 && (
+          {expiredWithStockCount > 0 && (
             <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs animate-in fade-in duration-200">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-rose-600/30 animate-pulse">
@@ -3819,7 +4468,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                 </div>
                 <div>
                   <h4 className="font-black text-rose-600 dark:text-rose-400 text-sm flex items-center gap-2">
-                    Action Required: {expiredBatchesCount} Expired Medicine Batch Lot(s) In Inventory
+                    Action Required: {expiredWithStockCount} Expired Medicine Batch Lot(s) In Stock
                   </h4>
                   <p className="text-slate-600 dark:text-slate-300 mt-0.5 text-[11px] leading-relaxed">
                     Under pharmacy compliance policy, these lots are automatically locked out of counter POS dispensing. Pharmacists must quarantine, return to supplier, or complete certified disposal.
@@ -3831,19 +4480,22 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                 className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs shrink-0 cursor-pointer shadow-md shadow-rose-600/20 flex items-center gap-1.5 transition-all"
               >
                 <ShieldAlert className="w-4 h-4" />
-                <span>View Expired Lots ({expiredBatchesCount})</span>
+                <span>View Expired Lots ({expiredWithStockCount})</span>
               </button>
             </div>
           )}
+
 
           {/* Filter Chips Bar */}
           <div className="flex flex-wrap items-center gap-2 pt-1 border-b pb-3 border-slate-200 dark:border-slate-800">
             {[
               { id: 'all', label: 'All Lots', count: batches.length },
-              { id: 'expired', label: 'Expired Lots (Action Required)', count: expiredBatchesCount, isWarning: expiredBatchesCount > 0 },
-              { id: 'critical', label: 'Expiring ≤30d', count: criticalBatchesCount },
-              { id: 'quarantined', label: 'Quarantined Lots', count: quarantinedBatchesCount },
-              { id: 'active', label: 'Active Saleable', count: activeSaleableBatchesCount },
+              { id: 'expiring_soon', label: 'Expiring Soon (≤90d)', count: expiringSoonCount, isWarning: expiringSoonCount > 0 },
+              { id: 'critical', label: 'Critical (≤30d)', count: criticalBatchesCount, isDanger: criticalBatchesCount > 0 },
+              { id: 'expired', label: 'Expired Lots', count: expiredBatchesCount, isDanger: expiredWithStockCount > 0 },
+              { id: 'active', label: 'Active Safe (>90d)', count: activeSaleableBatchesCount },
+              { id: 'quarantined', label: 'Quarantined', count: quarantinedBatchesCount },
+              { id: 'depleted', label: 'Depleted Stock', count: depletedBatchesCount },
             ].map((f) => {
               const isActive = batchFilter === f.id;
               return (
@@ -3852,9 +4504,11 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                   onClick={() => setBatchFilter(f.id)}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border ${
                     isActive
-                      ? f.id === 'expired'
+                      ? f.id === 'expired' || f.id === 'critical'
                         ? 'bg-rose-600 text-white border-rose-600 shadow-sm'
-                        : 'bg-teal-600 text-white border-teal-600 shadow-sm'
+                        : f.id === 'expiring_soon'
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
+                          : 'bg-teal-600 text-white border-teal-600 shadow-sm'
                       : isDark
                         ? 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-900'
                         : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
@@ -3864,9 +4518,11 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                   <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-black ${
                     isActive
                       ? 'bg-white/20 text-white'
-                      : f.isWarning
+                      : f.isDanger
                         ? 'bg-rose-500 text-white animate-pulse'
-                        : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                        : f.isWarning
+                          ? 'bg-amber-400 text-slate-950 font-bold'
+                          : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
                   }`}>
                     {f.count}
                   </span>
@@ -3904,11 +4560,12 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                   </tr>
                 ) : (
                   filteredBatches.map((b) => {
-                    const isPastExpiryActive = (b.is_expired === 1 || Number(b.days_to_expiry) <= 0) && b.status === 'active' && b.stock_quantity > 0;
-                    const isQuarantined = b.status === 'quarantined';
-                    const isCritical = Number(b.days_to_expiry) > 0 && Number(b.days_to_expiry) <= 30 && b.status === 'active';
-                    const isDepleted = b.stock_quantity === 0 || b.status === 'depleted';
-                    const isCalendarExpired = b.is_expired === 1 || Number(b.days_to_expiry) <= 0;
+                    const isPastExpiryActive = isBatchExpired(b) && b.status === 'active' && b.stock_quantity > 0;
+                    const isCalendarExpired = isBatchExpired(b);
+                    const isQuarantined = isBatchQuarantined(b);
+                    const isCritical = isBatchCritical(b);
+                    const isExpiringSoon = isBatchExpiringSoon(b);
+                    const isDepleted = isBatchDepleted(b);
 
                     return (
                       <tr 
@@ -3943,7 +4600,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                           ) : (
                             <span className={`px-2 py-0.5 rounded-md font-mono text-[11px] font-bold ${
                               b.days_to_expiry <= 30 ? 'bg-rose-500/10 text-rose-500' :
-                              b.days_to_expiry <= 90 ? 'bg-amber-500/10 text-amber-500' :
+                              b.days_to_expiry <= 90 ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 font-black' :
                               'bg-emerald-500/10 text-emerald-500'
                             }`}>
                               {b.days_to_expiry} days
@@ -3962,15 +4619,25 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                               <AlertTriangle className="w-3 h-3" />
                               EXPIRED (LOCKED)
                             </span>
+                          ) : isCalendarExpired ? (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase bg-rose-500/10 text-rose-500 border border-rose-500/20 flex items-center gap-1 w-fit">
+                              <AlertTriangle className="w-3 h-3" />
+                              EXPIRED
+                            </span>
                           ) : isQuarantined ? (
-                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase bg-amber-500/20 text-amber-500 border border-amber-500/30 flex items-center gap-1 w-fit">
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase bg-purple-500/20 text-purple-600 dark:text-purple-300 border border-purple-500/30 flex items-center gap-1 w-fit">
                               <Shield className="w-3 h-3" />
                               QUARANTINED
                             </span>
                           ) : isCritical ? (
-                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase bg-orange-500/10 text-orange-500 border border-orange-500/20 flex items-center gap-1 w-fit">
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex items-center gap-1 w-fit animate-pulse">
                               <Clock className="w-3 h-3" />
                               CRITICAL (≤30D)
+                            </span>
+                          ) : isExpiringSoon ? (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 flex items-center gap-1 w-fit">
+                              <Clock className="w-3 h-3" />
+                              EXPIRING (≤90D)
                             </span>
                           ) : isDepleted ? (
                             <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase bg-slate-800 text-slate-400">
@@ -4059,17 +4726,6 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
               >
                 <Download className="w-3.5 h-3.5" />
                 Export CSV
-              </button>
-
-              <button
-                onClick={() => window.print()}
-                className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer border transition-colors ${
-                  isDark ? 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                }`}
-                title="Print current report view"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                Print Report
               </button>
 
               <button
@@ -4200,6 +4856,59 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
           {/* SUB-TAB 1: SALES & INVOICES */}
           {reportSubTab === 'sales' && (
             <div className="space-y-6 animate-in fade-in duration-150">
+              {/* Financial Performance KPI Ribbon for Active Timeline */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'}`}>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Timeline Total Revenue</span>
+                  <p className="text-xl sm:text-2xl font-black text-teal-600 dark:text-teal-400 font-mono mt-1">
+                    Rs. {Number(
+                      salesHistory.reduce((acc, s) => acc + (Number(s.total_amount) || 0), 0) ||
+                      dailySales.reduce((acc, d) => acc + (Number(d.net_sales || d.total_amount || d.total_revenue || 0)), 0)
+                    ).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                  <span className="text-[11px] text-slate-400 mt-1 block">
+                    {reportTimeline === 'all' ? 'All-time accumulated income' : `Filtered: ${reportTimeline}`}
+                  </span>
+                </div>
+
+                <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'}`}>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Invoices & Receipts</span>
+                  <p className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white font-mono mt-1">
+                    {salesHistory.length > 0 ? salesHistory.length : dailySales.reduce((acc, d) => acc + (Number(d.sale_count || d.total_sales || 0)), 0)}
+                  </p>
+                  <span className="text-[11px] text-emerald-500 font-medium mt-1 flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" />
+                    <span>Transactions finalized</span>
+                  </span>
+                </div>
+
+                <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'}`}>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Average Bill Value</span>
+                  <p className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white font-mono mt-1">
+                    Rs. {salesHistory.length > 0 
+                      ? (salesHistory.reduce((acc, s) => acc + (Number(s.total_amount) || 0), 0) / salesHistory.length).toLocaleString(undefined, { maximumFractionDigits: 0 }) 
+                      : '0'}
+                  </p>
+                  <span className="text-[11px] text-slate-400 mt-1 block">Per-customer basket size</span>
+                </div>
+
+                <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'}`}>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Payment Methods</span>
+                  <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-500">
+                      CASH: {salesHistory.filter(s => (s.payment_method || 'CASH') === 'CASH').length}
+                    </span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-sky-500/10 text-sky-500">
+                      CARD: {salesHistory.filter(s => s.payment_method === 'CARD').length}
+                    </span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-purple-500/10 text-purple-500">
+                      ONLINE: {salesHistory.filter(s => s.payment_method === 'ONLINE').length}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">Full payment reconciliation</span>
+                </div>
+              </div>
+
               {/* Daily Sales Aggregation */}
               <div className={`p-6 rounded-3xl border space-y-4 ${
                 isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
@@ -4243,17 +4952,17 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                         dailySales.map((d, idx) => (
                           <tr key={idx} className="hover:bg-teal-500/5 transition-colors">
                             <td className="py-2.5 px-3 font-semibold">
-                              {new Date(d.sale_date).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
+                              {new Date(d.sale_date || d.sale_day).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
                             </td>
-                            <td className="py-2.5 px-3 text-center font-mono font-bold">{d.sale_count || d.total_sales || 0}</td>
+                            <td className="py-2.5 px-3 text-center font-mono font-bold">{d.sale_count || d.total_sales || d.total_transactions || 0}</td>
                             <td className="py-2.5 px-3 text-right font-mono font-semibold">
-                              Rs. {Number(d.gross_sales || d.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              Rs. {Number(d.gross_sales || d.total_amount || d.total_revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono text-slate-400">
                               Rs. {Number(d.total_tax || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono font-bold text-teal-600 dark:text-teal-400">
-                              Rs. {Number(d.net_sales || d.total_net || d.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              Rs. {Number(d.net_sales || d.total_net || d.total_revenue || d.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono text-[11px] text-slate-400">
                               Rs. {Number(d.cash_sales || 0).toFixed(0)} / Rs. {Number(d.card_sales || 0).toFixed(0)}
@@ -4277,7 +4986,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                       Recent POS Sales Invoices
                     </h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                      Atomic POS transactions committed with row-level pessimistic locking
+                      Atomic POS transactions committed with row-level pessimistic locking & database synchronization
                     </p>
                   </div>
                 </div>
@@ -4296,6 +5005,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                         <th className="py-2.5 px-3 text-right">Net Total</th>
                         <th className="py-2.5 px-3 text-center">Payment</th>
                         <th className="py-2.5 px-3 text-center">Status</th>
+                        <th className="py-2.5 px-3 text-center">Actions</th>
                       </tr>
                     </thead>
                     <tbody className={`divide-y text-xs ${
@@ -4303,7 +5013,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                     }`}>
                       {salesHistory.length === 0 ? (
                         <tr>
-                          <td colSpan="8" className="py-6 text-center text-slate-500 italic">
+                          <td colSpan="9" className="py-6 text-center text-slate-500 italic">
                             No POS sales records found.
                           </td>
                         </tr>
@@ -4317,12 +5027,15 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                               {new Date(s.sale_date).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                             </td>
                             <td className="py-2.5 px-3 font-medium">
-                              {s.customer_name || 'Walk-in'}
+                              <span>{s.customer_name || s.patient_name || 'Walk-in'}</span>
+                              {s.prescription_ref && s.prescription_ref !== 'OTC' && (
+                                <span className="block text-[10px] text-teal-600 dark:text-teal-400 font-mono">Ref: {s.prescription_ref}</span>
+                              )}
                             </td>
                             <td className="py-2.5 px-3 text-slate-400">
                               {s.cashier_name || 'Pharmacist'}
                             </td>
-                            <td className="py-2.5 px-3 text-center font-mono">
+                            <td className="py-2.5 px-3 text-center font-mono" title={s.items_summary || undefined}>
                               {s.item_count || 1}
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
@@ -4330,15 +5043,27 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                             </td>
                             <td className="py-2.5 px-3 text-center">
                               <span className={`px-2 py-0.5 rounded-md font-mono text-[10px] font-bold ${
-                                s.payment_method === 'CARD' ? 'bg-sky-500/10 text-sky-500' : 'bg-emerald-500/10 text-emerald-500'
+                                s.payment_method === 'CARD' ? 'bg-sky-500/10 text-sky-500' : 
+                                s.payment_method === 'ONLINE' ? 'bg-purple-500/10 text-purple-500' : 
+                                'bg-emerald-500/10 text-emerald-500'
                               }`}>
                                 {s.payment_method || 'CASH'}
                               </span>
                             </td>
                             <td className="py-2.5 px-3 text-center">
                               <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-500 text-[10px] font-bold uppercase">
-                                {s.status || 'COMPLETED'}
+                                {s.status || s.payment_status || 'COMPLETED'}
                               </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <button
+                                onClick={() => handleOpenSaleInfo(s)}
+                                className="px-3 py-1.5 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400 font-bold text-xs inline-flex items-center gap-1.5 transition-all cursor-pointer border border-teal-500/20 shadow-xs hover:shadow-md hover:scale-[1.02] active:scale-95"
+                                title="View complete transaction breakdown & medicine line items"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                View Info
+                              </button>
                             </td>
                           </tr>
                         ))
@@ -4732,154 +5457,492 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         </div>
       )}
 
-      {/* TAB 6: STAFF USER ACCOUNTS & ACCESS CONTROL (ADMIN ONLY) */}
+      {/* TAB 6: COMPLETE USER MANAGEMENT & ACCESS CONTROL (ADMIN ONLY) */}
       {activeTab === 'users' && (
         isAdmin ? (
-          <div className={`p-6 rounded-3xl border space-y-4 animate-in fade-in duration-150 ${
-            isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
-          }`}>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-6 animate-in fade-in duration-150">
+            {/* Top Navigation & Hub Header */}
+            <div className={`p-6 rounded-3xl border flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+              isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
+            }`}>
               <div>
-                <h2 className={`text-base font-bold flex items-center gap-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                  <ShieldCheck className="w-5 h-5 text-teal-500" />
-                  Staff User Accounts & Access Control
+                <h2 className={`text-lg font-black flex items-center gap-2.5 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                  <ShieldCheck className="w-6 h-6 text-teal-500" />
+                  User & Access Management Center
                 </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Configure dispensary pharmacists, cashier credentials, and feature-level accessibility privileges
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Manage dispensary team credentials & permissions, plus registered public patient accounts
                 </p>
               </div>
 
-              <button
-                onClick={() => setIsNewUserModalOpen(true)}
-                className="px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center gap-2 cursor-pointer shadow-md shadow-teal-600/20 transition-all shrink-0"
-              >
-                <Plus className="w-4 h-4" />
-                Add Staff User
-              </button>
+              {/* Sub-Tab Switcher */}
+              <div className="flex items-center gap-1.5 p-1.5 rounded-2xl border bg-slate-100/80 dark:bg-slate-950/80 border-slate-200 dark:border-slate-800 self-start md:self-auto shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setUserSubTab('staff')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all ${
+                    userSubTab === 'staff'
+                      ? 'bg-teal-600 text-white shadow-md shadow-teal-600/20'
+                      : isDark
+                        ? 'text-slate-400 hover:text-white'
+                        : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Shield className="w-3.5 h-3.5" />
+                  <span>Staff & Pharmacists ({staffUsers.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setUserSubTab('customers')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all ${
+                    userSubTab === 'customers'
+                      ? 'bg-teal-600 text-white shadow-md shadow-teal-600/20'
+                      : isDark
+                        ? 'text-slate-400 hover:text-white'
+                        : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Registered Site Patients ({customers.length})</span>
+                </button>
+              </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className={`border-b uppercase tracking-wider text-[10px] font-bold ${
-                  isDark ? 'bg-slate-950/60 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-600'
-                }`}>
-                  <tr>
-                    <th className="py-2.5 px-3">User ID</th>
-                    <th className="py-2.5 px-3">Full Name & Username</th>
-                    <th className="py-2.5 px-3">Role</th>
-                    <th className="py-2.5 px-3">Dispensary Privileges</th>
-                    <th className="py-2.5 px-3">Email Address</th>
-                    <th className="py-2.5 px-3 text-center">Account Status</th>
-                    <th className="py-2.5 px-3">Created / Last Login</th>
-                    <th className="py-2.5 px-3 text-right">Access Actions</th>
-                  </tr>
-                </thead>
-                <tbody className={`divide-y text-xs ${
-                  isDark ? 'divide-slate-800 text-slate-300' : 'divide-slate-200 text-slate-700'
-                }`}>
-                  {staffUsers.length === 0 ? (
-                    <tr>
-                      <td colSpan="8" className="py-6 text-center text-slate-500 italic">
-                        No staff accounts found.
-                      </td>
-                    </tr>
-                  ) : (
-                    staffUsers.map((u) => (
-                      <tr key={u.user_id} className="hover:bg-teal-500/5 transition-colors">
-                        <td className="py-2.5 px-3 font-mono text-slate-400 font-bold">#{u.user_id}</td>
-                        <td className="py-2.5 px-3">
-                          <div className="font-bold text-slate-900 dark:text-white">{u.full_name || u.username}</div>
-                          <div className="font-mono text-[11px] text-teal-600 dark:text-teal-400">@{u.username}</div>
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <span className={`px-2.5 py-0.5 rounded-md font-mono text-[10px] font-bold ${
-                            u.role === 'ADMIN' ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20' :
-                            'bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20'
-                          }`}>
-                            {u.role}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <div className="flex flex-wrap gap-1 max-w-xs">
-                            {u.role === 'ADMIN' ? (
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/10 text-rose-500 border border-rose-500/20">
-                                Full System Administrator Access
-                              </span>
-                            ) : (
-                              <>
-                                {u.permissions?.can_pos && (
-                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20">
-                                    POS Counter
-                                  </span>
-                                )}
-                                {u.permissions?.can_manage_medicines && (
-                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/10 text-sky-500 border border-sky-500/20">
-                                    Formulary Edit
-                                  </span>
-                                )}
-                                {u.permissions?.can_manage_batches && (
-                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20">
-                                    Batch Stock
-                                  </span>
-                                )}
-                                {u.permissions?.can_view_reports && (
-                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                                    Reports
-                                  </span>
-                                )}
-                                {u.permissions?.can_view_audit && (
-                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                                    Audit Trail
-                                  </span>
-                                )}
-                                {(!u.permissions || Object.values(u.permissions).every(v => !v)) && (
-                                  <span className="text-[10px] text-slate-400 italic">No privileges granted</span>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-3 font-mono text-slate-400">{u.email || '-'}</td>
-                        <td className="py-2.5 px-3 text-center">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                            u.is_active ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-700/50 text-slate-400'
-                          }`}>
-                            {u.is_active ? 'Active' : 'Inactive'}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 text-slate-400">
-                          {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
-                        </td>
-                        <td className="py-2.5 px-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              onClick={() => handleOpenEditUser(u)}
-                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors flex items-center gap-1 ${
-                                isDark ? 'bg-slate-800 hover:bg-slate-700 text-teal-400' : 'bg-slate-100 hover:bg-slate-200 text-teal-700'
-                              }`}
-                              title="Configure privileges and details for this user"
-                            >
-                              <Sliders className="w-3 h-3" />
-                              Edit Privileges
-                            </button>
-                            <button
-                              onClick={() => handleToggleUserStatus(u)}
-                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
-                                u.is_active
-                                  ? 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20'
-                                  : 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20'
-                              }`}
-                            >
-                              {u.is_active ? 'Deactivate' : 'Activate'}
-                            </button>
-                          </div>
-                        </td>
+            {/* SUB-VIEW 1: STAFF & PHARMACISTS */}
+            {userSubTab === 'staff' && (
+              <div className={`p-6 rounded-3xl border space-y-4 ${
+                isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
+              }`}>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className={`text-base font-bold flex items-center gap-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                      <Shield className="w-4 h-4 text-teal-500" />
+                      Dispensary Staff Accounts
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Configure pharmacists, cashier credentials, and feature-level accessibility privileges
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => setIsNewUserModalOpen(true)}
+                    className="px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center gap-2 cursor-pointer shadow-md shadow-teal-600/20 transition-all shrink-0"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Staff User
+                  </button>
+                </div>
+
+                {/* Staff Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className={`border-b uppercase tracking-wider text-[10px] font-bold ${
+                      isDark ? 'bg-slate-950/60 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-600'
+                    }`}>
+                      <tr>
+                        <th className="py-2.5 px-3">User ID</th>
+                        <th className="py-2.5 px-3">Full Name & Username</th>
+                        <th className="py-2.5 px-3">Role</th>
+                        <th className="py-2.5 px-3">Dispensary Privileges</th>
+                        <th className="py-2.5 px-3">Email Address</th>
+                        <th className="py-2.5 px-3 text-center">Account Status</th>
+                        <th className="py-2.5 px-3">Created / Last Login</th>
+                        <th className="py-2.5 px-3 text-right">Access Actions</th>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody className={`divide-y text-xs ${
+                      isDark ? 'divide-slate-800 text-slate-300' : 'divide-slate-200 text-slate-700'
+                    }`}>
+                      {staffUsers.length === 0 ? (
+                        <tr>
+                          <td colSpan="8" className="py-6 text-center text-slate-500 italic">
+                            No staff accounts found.
+                          </td>
+                        </tr>
+                      ) : (
+                        staffUsers.map((u) => (
+                          <tr key={u.user_id} className="hover:bg-teal-500/5 transition-colors">
+                            <td className="py-2.5 px-3 font-mono text-slate-400 font-bold">#{u.user_id}</td>
+                            <td className="py-2.5 px-3">
+                              <div className="font-bold text-slate-900 dark:text-white">{u.full_name || u.username}</div>
+                              <div className="font-mono text-[11px] text-teal-600 dark:text-teal-400">@{u.username}</div>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span className={`px-2.5 py-0.5 rounded-md font-mono text-[10px] font-bold ${
+                                u.role === 'ADMIN' ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20' :
+                                'bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20'
+                              }`}>
+                                {u.role}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="flex flex-wrap gap-1 max-w-xs">
+                                {u.role === 'ADMIN' ? (
+                                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/10 text-rose-500 border border-rose-500/20">
+                                    Full System Administrator Access
+                                  </span>
+                                ) : (
+                                  <>
+                                    {u.permissions?.can_pos && (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20">
+                                        POS Counter
+                                      </span>
+                                    )}
+                                    {u.permissions?.can_manage_medicines && (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/10 text-sky-500 border border-sky-500/20">
+                                        Formulary Edit
+                                      </span>
+                                    )}
+                                    {u.permissions?.can_manage_batches && (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                                        Batch Stock
+                                      </span>
+                                    )}
+                                    {u.permissions?.can_view_reports && (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                                        Reports
+                                      </span>
+                                    )}
+                                    {u.permissions?.can_view_audit && (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                                        Audit Trail
+                                      </span>
+                                    )}
+                                    {(!u.permissions || Object.values(u.permissions).every(v => !v)) && (
+                                      <span className="text-[10px] text-slate-400 italic">No privileges granted</span>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 font-mono text-slate-400">{u.email || '-'}</td>
+                            <td className="py-2.5 px-3 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                u.is_active ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-700/50 text-slate-400'
+                              }`}>
+                                {u.is_active ? 'Active' : 'Inactive'}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-400">
+                              {u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}
+                            </td>
+                            <td className="py-2.5 px-3 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  onClick={() => handleOpenEditUser(u)}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors flex items-center gap-1 ${
+                                    isDark ? 'bg-slate-800 hover:bg-slate-700 text-teal-400' : 'bg-slate-100 hover:bg-slate-200 text-teal-700'
+                                  }`}
+                                  title="Configure privileges and details for this user"
+                                >
+                                  <Sliders className="w-3 h-3" />
+                                  Edit Privileges
+                                </button>
+                                <button
+                                  onClick={() => handleToggleUserStatus(u)}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                                    u.is_active
+                                      ? 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20'
+                                      : 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20'
+                                  }`}
+                                >
+                                  {u.is_active ? 'Deactivate' : 'Activate'}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* SUB-VIEW 2: REGISTERED WEBSITE PATIENTS / CUSTOMERS */}
+            {userSubTab === 'customers' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                {/* Metrics Summary Strip */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'}`}>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Registered Patients</span>
+                    <p className="text-xl sm:text-2xl font-black text-teal-600 dark:text-teal-400 font-mono mt-1">
+                      {customers.length}
+                    </p>
+                    <span className="text-[11px] text-slate-400 mt-0.5 block">Online customer profiles</span>
+                  </div>
+
+                  <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'}`}>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Active Accounts</span>
+                    <p className="text-xl sm:text-2xl font-black text-emerald-500 font-mono mt-1">
+                      {customers.filter(c => c.is_active && c.status !== 'suspended').length}
+                    </p>
+                    <span className="text-[11px] text-emerald-500 font-medium mt-0.5 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" />
+                      <span>Verified & Operational</span>
+                    </span>
+                  </div>
+
+                  <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'}`}>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Suspended / Inactive</span>
+                    <p className="text-xl sm:text-2xl font-black text-rose-500 font-mono mt-1">
+                      {customers.filter(c => !c.is_active || c.status === 'suspended').length}
+                    </p>
+                    <span className="text-[11px] text-slate-400 mt-0.5 block">Access temporarily paused</span>
+                  </div>
+
+                  <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'}`}>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Prescriptions Linked</span>
+                    <p className="text-xl sm:text-2xl font-black text-sky-500 font-mono mt-1">
+                      {customers.reduce((acc, c) => acc + (Number(c.total_prescriptions) || 0), 0)}
+                    </p>
+                    <span className="text-[11px] text-slate-400 mt-0.5 block">Uploaded & processed Rx</span>
+                  </div>
+                </div>
+
+                {/* Search, Filter & Action Bar */}
+                <div className={`p-4 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+                  isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
+                }`}>
+                  <div className="flex flex-wrap items-center gap-2 flex-1 max-w-xl">
+                    <div className="relative flex-1 min-w-[200px]">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={customerSearch}
+                        onChange={(e) => setCustomerSearch(e.target.value)}
+                        placeholder="Search patients by name, email, phone, or NIC..."
+                        className={`w-full pl-9 pr-3 py-2 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                          isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'
+                        }`}
+                      />
+                      {customerSearch && (
+                        <button
+                          onClick={() => setCustomerSearch('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Filter chips */}
+                    <div className="flex items-center gap-1">
+                      {[
+                        { id: 'all', label: 'All Patients' },
+                        { id: 'active', label: 'Active Only' },
+                        { id: 'suspended', label: 'Suspended' }
+                      ].map((chip) => {
+                        const isSelected = customerStatusFilter === chip.id;
+                        return (
+                          <button
+                            key={chip.id}
+                            type="button"
+                            onClick={() => setCustomerStatusFilter(chip.id)}
+                            className={`px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-all ${
+                              isSelected
+                                ? 'bg-teal-600 text-white shadow-xs'
+                                : isDark
+                                  ? 'bg-slate-800 text-slate-400 hover:text-white'
+                                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            {chip.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 self-end md:self-auto shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setIsNewCustomerModalOpen(true)}
+                      className="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-teal-600/20 transition-all"
+                    >
+                      <UserPlus className="w-4 h-4" />
+                      <span>Register Patient</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Patients Table */}
+                <div className={`rounded-3xl border overflow-hidden ${
+                  isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
+                }`}>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className={`border-b uppercase tracking-wider text-[10px] font-bold ${
+                        isDark ? 'bg-slate-950/60 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-600'
+                      }`}>
+                        <tr>
+                          <th className="py-3 px-3">Patient ID</th>
+                          <th className="py-3 px-3">Patient Profile</th>
+                          <th className="py-3 px-3">Contact & NIC</th>
+                          <th className="py-3 px-3">Age & Address</th>
+                          <th className="py-3 px-3 text-center">Rx Orders</th>
+                          <th className="py-3 px-3 text-center">Account Status</th>
+                          <th className="py-3 px-3">Registered Date</th>
+                          <th className="py-3 px-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className={`divide-y text-xs ${
+                        isDark ? 'divide-slate-800 text-slate-300' : 'divide-slate-200 text-slate-700'
+                      }`}>
+                        {(() => {
+                          const filtered = customers.filter(c => {
+                            const q = customerSearch.toLowerCase().trim();
+                            const matchQuery = !q ||
+                              c.full_name?.toLowerCase().includes(q) ||
+                              c.email?.toLowerCase().includes(q) ||
+                              c.contact_no?.toLowerCase().includes(q) ||
+                              c.nic?.toLowerCase().includes(q);
+                            if (!matchQuery) return false;
+
+                            if (customerStatusFilter === 'active') return c.is_active && c.status !== 'suspended';
+                            if (customerStatusFilter === 'suspended') return !c.is_active || c.status === 'suspended';
+                            return true;
+                          });
+
+                          if (filtered.length === 0) {
+                            return (
+                              <tr>
+                                <td colSpan="8" className="py-10 text-center text-slate-400">
+                                  <Users className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                                  <p className="font-bold">No registered patient accounts found</p>
+                                  <p className="text-[11px] text-slate-500 mt-0.5">
+                                    {customerSearch ? 'Try a different search query' : 'Registered patients will appear here automatically when they sign up on the site'}
+                                  </p>
+                                </td>
+                              </tr>
+                            );
+                          }
+
+                          return filtered.map((cust) => {
+                            const isActive = cust.is_active && cust.status !== 'suspended';
+                            const initials = (cust.full_name || 'U')
+                              .split(' ')
+                              .map(n => n[0])
+                              .slice(0, 2)
+                              .join('')
+                              .toUpperCase();
+
+                            return (
+                              <tr key={cust.customer_id} className="hover:bg-teal-500/5 transition-colors">
+                                <td className="py-3 px-3 font-mono text-slate-400 font-bold">#{cust.customer_id}</td>
+                                
+                                <td className="py-3 px-3">
+                                  <div className="flex items-center gap-2.5">
+                                    <div className="w-8 h-8 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400 font-black text-xs flex items-center justify-center shrink-0 border border-teal-500/20">
+                                      {initials}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <div className="font-bold text-slate-900 dark:text-white truncate">
+                                        {cust.full_name}
+                                      </div>
+                                      <div className="font-mono text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                                        {cust.email}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+
+                                <td className="py-3 px-3">
+                                  <div className="space-y-0.5">
+                                    <div className="font-medium text-slate-900 dark:text-slate-200 flex items-center gap-1">
+                                      <Phone className="w-3 h-3 text-teal-500 shrink-0" />
+                                      <span>{cust.contact_no || 'No contact'}</span>
+                                    </div>
+                                    {cust.nic && (
+                                      <div className="font-mono text-[11px] text-slate-400">
+                                        NIC: {cust.nic}
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+
+                                <td className="py-3 px-3 max-w-xs">
+                                  <div className="space-y-0.5">
+                                    {cust.patient_age && (
+                                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                        Age: {cust.patient_age}
+                                      </span>
+                                    )}
+                                    <p className="text-[11px] text-slate-400 truncate" title={cust.address || ''}>
+                                      {cust.address || 'No address registered'}
+                                    </p>
+                                  </div>
+                                </td>
+
+                                <td className="py-3 px-3 text-center">
+                                  <span className="px-2.5 py-1 rounded-full font-mono text-[11px] font-bold bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20">
+                                    {cust.total_prescriptions || 0} Rx
+                                  </span>
+                                </td>
+
+                                <td className="py-3 px-3 text-center">
+                                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase inline-flex items-center gap-1 ${
+                                    isActive
+                                      ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
+                                      : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
+                                  }`}>
+                                    <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                                    <span>{isActive ? 'Active' : 'Suspended'}</span>
+                                  </span>
+                                </td>
+
+                                <td className="py-3 px-3 text-slate-400 text-[11px]">
+                                  {cust.created_at ? new Date(cust.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'N/A'}
+                                </td>
+
+                                <td className="py-3 px-3 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenEditCustomer(cust)}
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors flex items-center gap-1 ${
+                                        isDark ? 'bg-slate-800 hover:bg-slate-700 text-teal-400' : 'bg-slate-100 hover:bg-slate-200 text-teal-700'
+                                      }`}
+                                      title="Edit patient profile details"
+                                    >
+                                      <Edit className="w-3 h-3" />
+                                      <span>Edit</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleCustomerStatus(cust)}
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                                        isActive
+                                          ? 'bg-amber-500/10 text-amber-500 hover:bg-amber-500/20'
+                                          : 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20'
+                                      }`}
+                                      title={isActive ? 'Suspend patient login access' : 'Reactivate patient login'}
+                                    >
+                                      {isActive ? 'Suspend' : 'Activate'}
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteCustomer(cust)}
+                                      className="p-1 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer transition-colors"
+                                      title="Remove patient record"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          });
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className={`p-8 sm:p-12 rounded-3xl border text-center space-y-4 max-w-xl mx-auto my-12 animate-in fade-in duration-150 ${
@@ -4896,6 +5959,267 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
             </button>
           </div>
         )
+      )}
+
+      {/* TAB 7: PRESCRIPTION ORDER SUPERVISION & PHARMACIST WORKFLOW */}
+      {activeTab === 'prescriptions' && (
+        <PrescriptionOrdersManager staffUser={staffUser} />
+      )}
+
+      {/* MODAL: SALE & INVOICE DETAILS BREAKDOWN */}
+      {selectedSaleForInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-150">
+          <div className={`border rounded-3xl p-5 sm:p-7 w-full max-w-2xl max-h-[92vh] overflow-y-auto my-auto space-y-5 shadow-2xl transition-all ${
+            isDark ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'
+          }`}>
+            {/* Header */}
+            <div className="flex items-start justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0">
+                  <Receipt className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-black font-mono tracking-tight text-slate-900 dark:text-white">
+                      {selectedSaleForInfo.invoice_number}
+                    </h3>
+                    <button
+                      onClick={() => handleCopyInvoiceNumber(selectedSaleForInfo.invoice_number)}
+                      className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Copy Invoice Number"
+                    >
+                      {copiedInvoice ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedInvoice ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {new Date(selectedSaleForInfo.sale_date).toLocaleString(undefined, { 
+                      weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' 
+                    })}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className={`px-2.5 py-1 rounded-full text-[10px] font-mono font-bold ${
+                  selectedSaleForInfo.payment_method === 'CARD' ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30' :
+                  selectedSaleForInfo.payment_method === 'ONLINE' ? 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30' :
+                  'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                }`}>
+                  {selectedSaleForInfo.payment_method || 'CASH'}
+                </span>
+                <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 uppercase">
+                  {selectedSaleForInfo.status || selectedSaleForInfo.payment_status || 'PAID'}
+                </span>
+                <button
+                  onClick={() => setSelectedSaleForInfo(null)}
+                  className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Meta Info Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className={`p-3.5 rounded-2xl border ${isDark ? 'bg-slate-950/60 border-slate-800/80' : 'bg-slate-50 border-slate-200'}`}>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Customer / Patient</span>
+                <p className="text-sm font-bold mt-1 text-slate-900 dark:text-white truncate">
+                  {selectedSaleForInfo.customer_name || selectedSaleForInfo.patient_name || 'Walk-in Customer'}
+                </p>
+                <span className="text-[11px] text-teal-600 dark:text-teal-400 font-mono mt-0.5 block truncate">
+                  Ref: {selectedSaleForInfo.prescription_ref || 'OTC'}
+                </span>
+              </div>
+
+              <div className={`p-3.5 rounded-2xl border ${isDark ? 'bg-slate-950/60 border-slate-800/80' : 'bg-slate-50 border-slate-200'}`}>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Cashier / Pharmacist</span>
+                <p className="text-sm font-bold mt-1 text-slate-900 dark:text-white truncate">
+                  {selectedSaleForInfo.cashier_name || 'Staff Pharmacist'}
+                </p>
+                <span className="text-[11px] text-slate-400 mt-0.5 block truncate">
+                  Verified Dispensation
+                </span>
+              </div>
+
+              <div className={`p-3.5 rounded-2xl border ${isDark ? 'bg-slate-950/60 border-slate-800/80' : 'bg-slate-50 border-slate-200'}`}>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Amount</span>
+                <p className="text-lg font-black font-mono mt-0.5 text-emerald-600 dark:text-emerald-400">
+                  Rs. {Number(selectedSaleForInfo.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </p>
+                <span className="text-[11px] text-slate-400 block truncate">
+                  Paid: Rs. {Number(selectedSaleForInfo.amount_paid || selectedSaleForInfo.total_amount).toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            {/* Line Items Table */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                  <Pill className="w-3.5 h-3.5 text-teal-500" />
+                  Prescription & Medicine Line Items
+                </h4>
+                {saleInfoLoading && (
+                  <span className="text-[11px] text-teal-500 flex items-center gap-1 font-semibold">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    Fetching items...
+                  </span>
+                )}
+              </div>
+
+              <div className={`border rounded-2xl overflow-hidden ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
+                <table className="w-full text-left text-xs">
+                  <thead className={`border-b text-[10px] font-bold uppercase tracking-wider ${
+                    isDark ? 'bg-slate-950/80 text-slate-400 border-slate-800' : 'bg-slate-100 text-slate-600 border-slate-200'
+                  }`}>
+                    <tr>
+                      <th className="py-2.5 px-3">Medication</th>
+                      <th className="py-2.5 px-3">Dosage / Packaging</th>
+                      <th className="py-2.5 px-3 text-center">Batch / Lot</th>
+                      <th className="py-2.5 px-3 text-right">Unit Rate</th>
+                      <th className="py-2.5 px-3 text-center">Qty</th>
+                      <th className="py-2.5 px-3 text-right">Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody className={`divide-y text-xs ${
+                    isDark ? 'divide-slate-800 text-slate-300' : 'divide-slate-200 text-slate-700'
+                  }`}>
+                    {(!selectedSaleForInfo.items || selectedSaleForInfo.items.length === 0) ? (
+                      <tr>
+                        <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
+                          {selectedSaleForInfo.items_summary || 'Dispensed Medication'}
+                        </td>
+                        <td className="py-3 px-3 text-slate-400">Standard Dispensation</td>
+                        <td className="py-3 px-3 text-center font-mono text-slate-400">Allocated</td>
+                        <td className="py-3 px-3 text-right font-mono font-semibold">
+                          Rs. {Number(selectedSaleForInfo.total_amount / (selectedSaleForInfo.item_count || 1)).toFixed(2)}
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono font-bold">
+                          {selectedSaleForInfo.item_count || 1}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-bold text-teal-600 dark:text-teal-400">
+                          Rs. {Number(selectedSaleForInfo.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    ) : (
+                      selectedSaleForInfo.items.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-teal-500/5 transition-colors">
+                          <td className="py-2.5 px-3">
+                            <span className="font-bold text-slate-900 dark:text-white block">
+                              {item.medicine_name}
+                            </span>
+                            {item.generic_name && (
+                              <span className="text-[10px] text-slate-400 italic block">
+                                {item.generic_name}
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-500 dark:text-slate-400">
+                            <span>{item.packaging_desc || item.dosage_form || 'Standard'}</span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono text-[11px] text-slate-400">
+                            {item.batch_number ? (
+                              <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold text-slate-600 dark:text-slate-300">
+                                {item.batch_number}
+                              </span>
+                            ) : (
+                              'Counter Batch'
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono">
+                            Rs. {Number(item.unit_price).toFixed(2)}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono font-bold">
+                            {item.quantity}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-teal-600 dark:text-teal-400">
+                            Rs. {Number(item.subtotal).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Financial Summary & Calculations Box */}
+            <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+              <div className="space-y-1.5 text-xs">
+                <div className="flex justify-between text-slate-500 dark:text-slate-400 font-medium">
+                  <span>Gross Subtotal</span>
+                  <span className="font-mono">Rs. {Number(selectedSaleForInfo.subtotal || selectedSaleForInfo.total_amount).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-slate-500 dark:text-slate-400 font-medium">
+                  <span>Discounts Applied</span>
+                  <span className="font-mono text-emerald-600 dark:text-emerald-400">Rs. {Number(selectedSaleForInfo.discount_amount || 0).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-slate-500 dark:text-slate-400 font-medium">
+                  <span>Tax & Dispensary Surcharge (VAT)</span>
+                  <span className="font-mono">Rs. {Number(selectedSaleForInfo.tax_amount || 0).toFixed(2)}</span>
+                </div>
+                <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center text-sm font-black">
+                  <span className="text-slate-900 dark:text-white">Net Total Bill</span>
+                  <span className="text-lg font-mono text-emerald-600 dark:text-emerald-400">
+                    Rs. {Number(selectedSaleForInfo.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-500 dark:text-slate-400 text-[11px] pt-1">
+                  <span>Amount Tendered / Paid ({selectedSaleForInfo.payment_method || 'CASH'})</span>
+                  <span className="font-mono">Rs. {Number(selectedSaleForInfo.amount_paid || selectedSaleForInfo.total_amount).toFixed(2)}</span>
+                </div>
+                {Number(selectedSaleForInfo.change_given || (selectedSaleForInfo.amount_paid - selectedSaleForInfo.total_amount)) > 0 && (
+                  <div className="flex justify-between text-teal-600 dark:text-teal-400 font-bold text-[11px]">
+                    <span>Change Returned</span>
+                    <span className="font-mono">
+                      Rs. {Number(selectedSaleForInfo.change_given || (selectedSaleForInfo.amount_paid - selectedSaleForInfo.total_amount)).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setSelectedSaleForInfo(null)}
+                className={`w-full sm:w-auto px-5 py-2.5 rounded-xl font-bold text-xs border transition-colors cursor-pointer ${
+                  isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                Close Details
+              </button>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handlePrintReceiptSlip({
+                      invoiceNumber: selectedSaleForInfo.invoice_number,
+                      medicineName: selectedSaleForInfo.items?.[0]?.medicine_name || selectedSaleForInfo.patient_name || 'Prescription Items',
+                      genericName: selectedSaleForInfo.items?.[0]?.generic_name || '',
+                      dosageForm: selectedSaleForInfo.items?.[0]?.dosage_form || '',
+                      batchNumber: selectedSaleForInfo.items?.[0]?.batch_number || 'N/A',
+                      quantity: selectedSaleForInfo.items?.reduce((acc, it) => acc + (it.quantity || 0), 0) || selectedSaleForInfo.item_count || 1,
+                      packagingSummary: selectedSaleForInfo.items?.[0]?.packaging_desc || selectedSaleForInfo.items_summary || 'Prescription Pack',
+                      unitPrice: selectedSaleForInfo.items?.[0]?.unit_price || (selectedSaleForInfo.total_amount / (selectedSaleForInfo.item_count || 1)),
+                      totalBill: selectedSaleForInfo.total_amount,
+                      patientName: selectedSaleForInfo.patient_name || selectedSaleForInfo.customer_name || 'Walk-in Customer',
+                      prescriptionRef: selectedSaleForInfo.prescription_ref || 'OTC',
+                      date: new Date(selectedSaleForInfo.sale_date).toLocaleString()
+                    });
+                  }}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-teal-600/20 cursor-pointer transition-all"
+                >
+                  <Printer className="w-4 h-4" />
+                  Print Receipt Slip
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* MODAL 1: ADD NEW MEDICINE */}
@@ -5589,6 +6913,72 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                 </div>
               </div>
 
+              {/* Promotional Offer Allocation Section in Edit Modal */}
+              <div className={`p-3.5 rounded-2xl border space-y-3 ${
+                editMedForm.is_offer 
+                  ? 'bg-rose-500/10 border-rose-500/30' 
+                  : isDark ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Flame className={`w-4 h-4 ${editMedForm.is_offer ? 'text-rose-500 animate-pulse' : 'text-slate-400'}`} />
+                    <div>
+                      <label htmlFor="edit_med_is_offer" className="font-bold text-xs text-slate-900 dark:text-white cursor-pointer">
+                        Allocate as Special Promotional Offer
+                      </label>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        Displays this medicine in the Website Special Offers section with a SALE badge.
+                      </p>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    id="edit_med_is_offer"
+                    checked={editMedForm.is_offer}
+                    onChange={(e) => setEditMedForm({ ...editMedForm, is_offer: e.target.checked })}
+                    className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 cursor-pointer"
+                  />
+                </div>
+
+                {editMedForm.is_offer && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-rose-500/20">
+                    <div>
+                      <label className="text-slate-700 dark:text-slate-300 font-bold block mb-1">
+                        Discount Rate (%) *
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="1"
+                          max="90"
+                          step="0.5"
+                          value={editMedForm.discount_percent}
+                          onChange={(e) => setEditMedForm({ ...editMedForm, discount_percent: parseFloat(e.target.value) || 0 })}
+                          className={`w-full p-2.5 rounded-xl border text-xs font-mono font-bold focus:outline-none focus:border-rose-500 ${
+                            isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-900'
+                          }`}
+                        />
+                        <span className="font-bold text-rose-500 text-xs">% OFF</span>
+                      </div>
+                    </div>
+
+                    <div className={`p-2.5 rounded-xl border flex flex-col justify-center ${
+                      isDark ? 'bg-slate-950/80 border-slate-800' : 'bg-white border-slate-200'
+                    }`}>
+                      <span className="text-[10px] text-slate-400 font-bold block">Live Counter Price:</span>
+                      <div className="flex items-baseline gap-1.5 mt-0.5">
+                        <span className="text-xs font-mono font-bold line-through text-slate-400">
+                          Rs. {Number(editMedForm.unit_price || 0).toFixed(2)}
+                        </span>
+                        <span className="text-sm font-mono font-black text-emerald-500">
+                          Rs. {(Number(editMedForm.unit_price || 0) * (1 - (Number(editMedForm.discount_percent) || 0) / 100)).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
@@ -5607,6 +6997,201 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                   className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-black cursor-pointer shadow-md shadow-teal-600/20 transition-all"
                 >
                   Save Formulation
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* DEDICATED MODAL: PROMOTIONAL OFFER ALLOCATION & DISCOUNT MANAGER */}
+      {isOfferModalOpen && selectedMedForOffer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-150">
+          <div className={`border rounded-2xl sm:rounded-3xl p-6 sm:p-7 w-full max-w-lg max-h-[92vh] overflow-y-auto my-auto space-y-5 shadow-2xl transition-all ${
+            isDark ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'
+          }`}>
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-500 to-rose-500 text-white flex items-center justify-center shadow-md">
+                  <Flame className="w-5 h-5 animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
+                    Promotional Offer Allocation
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Allocate to Website Special Offers with promotional pricing
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOfferModalOpen(false);
+                  setSelectedMedForOffer(null);
+                }}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Close modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Target Product Summary */}
+            <div className={`p-4 rounded-2xl border flex items-center gap-3.5 ${
+              isDark ? 'bg-slate-950/70 border-slate-800' : 'bg-slate-50 border-slate-200'
+            }`}>
+              <div className="w-14 h-14 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-1 shrink-0 overflow-hidden flex items-center justify-center shadow-xs">
+                <img 
+                  src={getMedicineProductImage(selectedMedForOffer)} 
+                  alt={selectedMedForOffer.name} 
+                  className="w-full h-full object-contain"
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className="text-[10px] font-bold text-teal-600 dark:text-teal-400 uppercase tracking-wider block">
+                  {selectedMedForOffer.category_name}
+                </span>
+                <h4 className="font-extrabold text-sm text-slate-900 dark:text-white truncate">
+                  {selectedMedForOffer.name}
+                </h4>
+                <span className="text-xs text-slate-400 truncate block">
+                  {selectedMedForOffer.generic_name} • {selectedMedForOffer.brand_name}
+                </span>
+              </div>
+              <div className="text-right shrink-0">
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Regular Price</span>
+                <span className="text-sm font-black font-mono text-slate-900 dark:text-white">
+                  Rs. {Number(selectedMedForOffer.unit_price).toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            {/* Offer Form */}
+            <form onSubmit={handleSaveOffer} className="space-y-4 text-xs">
+              {/* Toggle Switch */}
+              <div className={`p-4 rounded-2xl border flex items-center justify-between transition-colors ${
+                offerForm.is_offer 
+                  ? 'bg-rose-500/10 border-rose-500/30' 
+                  : isDark ? 'bg-slate-950/40 border-slate-800' : 'bg-slate-50 border-slate-200'
+              }`}>
+                <div>
+                  <label htmlFor="modal_is_offer_toggle" className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-1.5 cursor-pointer">
+                    <Flame className={`w-4 h-4 ${offerForm.is_offer ? 'text-rose-500 animate-pulse' : 'text-slate-400'}`} />
+                    <span>Make This An Active Offer</span>
+                  </label>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    When enabled, only this and other allocated offer items will show in the website Offers section.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  id="modal_is_offer_toggle"
+                  checked={offerForm.is_offer}
+                  onChange={(e) => setOfferForm({ ...offerForm, is_offer: e.target.checked })}
+                  className="w-5 h-5 rounded text-rose-600 focus:ring-rose-500 cursor-pointer"
+                />
+              </div>
+
+              {/* Discount controls (enabled only if offer is on) */}
+              {offerForm.is_offer && (
+                <div className="space-y-3 p-4 rounded-2xl border border-rose-200 dark:border-rose-900/40 bg-gradient-to-br from-rose-500/5 to-amber-500/5 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between">
+                    <label className="font-bold text-slate-700 dark:text-slate-300">
+                      Promotional Discount Rate (% OFF) *
+                    </label>
+                    <span className="font-mono font-black text-rose-600 text-sm">
+                      {offerForm.discount_percent}% OFF
+                    </span>
+                  </div>
+
+                  {/* Quick preset buttons */}
+                  <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
+                    {[5, 10, 15, 20, 25, 30, 50].map((pct) => (
+                      <button
+                        key={pct}
+                        type="button"
+                        onClick={() => setOfferForm({ ...offerForm, discount_percent: pct })}
+                        className={`py-1.5 rounded-xl font-black text-xs transition-all cursor-pointer border ${
+                          Number(offerForm.discount_percent) === pct
+                            ? 'bg-rose-500 text-white border-rose-600 shadow-sm scale-105'
+                            : isDark
+                              ? 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-700'
+                              : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        {pct}%
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Custom input */}
+                  <div>
+                    <input
+                      type="number"
+                      min="1"
+                      max="90"
+                      step="0.5"
+                      required
+                      value={offerForm.discount_percent}
+                      onChange={(e) => setOfferForm({ ...offerForm, discount_percent: Math.max(1, Math.min(90, parseFloat(e.target.value) || 0)) })}
+                      placeholder="Custom percentage (e.g. 15)"
+                      className={`w-full p-2.5 rounded-xl border text-xs font-mono font-bold focus:outline-none focus:border-rose-500 ${
+                        isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-900'
+                      }`}
+                    />
+                  </div>
+
+                  {/* Live Pricing Breakdown */}
+                  <div className={`p-3 rounded-xl border space-y-1.5 ${
+                    isDark ? 'bg-slate-950/80 border-slate-800' : 'bg-white border-slate-200'
+                  }`}>
+                    <div className="flex items-center justify-between text-[11px] text-slate-400">
+                      <span>Regular Counter Price:</span>
+                      <span className="font-mono font-bold">Rs. {Number(selectedMedForOffer.unit_price).toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-rose-500 font-bold">
+                      <span>Discount Savings ({offerForm.discount_percent}%):</span>
+                      <span className="font-mono">-Rs. {((Number(selectedMedForOffer.unit_price) * Number(offerForm.discount_percent)) / 100).toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs font-black pt-1 border-t border-slate-100 dark:border-slate-800">
+                      <span className="text-slate-900 dark:text-white">Discounted Customer Price:</span>
+                      <span className="font-mono text-emerald-500 text-sm">
+                        Rs. {(Number(selectedMedForOffer.unit_price) * (1 - Number(offerForm.discount_percent) / 100)).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Modal Actions */}
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsOfferModalOpen(false);
+                    setSelectedMedForOffer(null);
+                  }}
+                  className={`px-4 py-2.5 rounded-xl font-bold cursor-pointer transition-colors ${
+                    isDark ? 'bg-slate-800 text-slate-300 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={offerSaving}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-rose-500 to-amber-500 hover:from-rose-600 hover:to-amber-600 text-white font-black cursor-pointer shadow-md shadow-rose-500/20 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Flame className="w-4 h-4" />
+                  <span>
+                    {offerSaving 
+                      ? 'Saving Offer...' 
+                      : offerForm.is_offer 
+                        ? 'Publish Offer to Website' 
+                        : 'Remove Offer'}
+                  </span>
                 </button>
               </div>
             </form>
@@ -5963,6 +7548,372 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                   className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-black cursor-pointer shadow-md shadow-teal-600/20 transition-all"
                 >
                   Save Changes & Privileges
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: REGISTER NEW PATIENT / SITE USER */}
+      {isNewCustomerModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-150">
+          <div className={`border rounded-2xl sm:rounded-3xl p-5 sm:p-7 w-full max-w-lg max-h-[92vh] overflow-y-auto my-auto space-y-4 shadow-2xl transition-all ${
+            isDark ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'
+          }`}>
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0">
+                  <UserPlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
+                    Register New Patient Account
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Enroll verified site customer into pharmacy MySQL database
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsNewCustomerModalOpen(false)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Close modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateCustomer} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                <div>
+                  <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Full Legal Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newCustomerForm.full_name}
+                    onChange={(e) => setNewCustomerForm({ ...newCustomerForm, full_name: e.target.value })}
+                    placeholder="e.g. Nimal Jayawardena"
+                    className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Email Address *</label>
+                  <input
+                    type="email"
+                    required
+                    value={newCustomerForm.email}
+                    onChange={(e) => setNewCustomerForm({ ...newCustomerForm, email: e.target.value })}
+                    placeholder="nimal@gmail.com"
+                    className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                <div>
+                  <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Password *</label>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={newCustomerForm.password}
+                    onChange={(e) => setNewCustomerForm({ ...newCustomerForm, password: e.target.value })}
+                    placeholder="Min 6 characters"
+                    className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Contact Phone</label>
+                  <input
+                    type="text"
+                    value={newCustomerForm.contact_no}
+                    onChange={(e) => setNewCustomerForm({ ...newCustomerForm, contact_no: e.target.value })}
+                    placeholder="+94 77 123 4567"
+                    className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                <div>
+                  <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">National Identity Card (NIC)</label>
+                  <input
+                    type="text"
+                    value={newCustomerForm.nic}
+                    onChange={(e) => setNewCustomerForm({ ...newCustomerForm, nic: e.target.value })}
+                    placeholder="e.g. 199421508210 or 942150821V"
+                    className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Patient Age</label>
+                  <input
+                    type="text"
+                    value={newCustomerForm.patient_age}
+                    onChange={(e) => setNewCustomerForm({ ...newCustomerForm, patient_age: e.target.value })}
+                    placeholder="e.g. 35 Yrs"
+                    className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Residential / Prescription Delivery Address</label>
+                <textarea
+                  rows={2}
+                  value={newCustomerForm.address}
+                  onChange={(e) => setNewCustomerForm({ ...newCustomerForm, address: e.target.value })}
+                  placeholder="Street address, city, district..."
+                  className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                    isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                  }`}
+                />
+              </div>
+
+              <div className="pt-1">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={newCustomerForm.is_active}
+                    onChange={(e) => setNewCustomerForm({ ...newCustomerForm, is_active: e.target.checked })}
+                    className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
+                  />
+                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Activate account immediately upon registration
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsNewCustomerModalOpen(false)}
+                  className={`w-full sm:w-auto px-4 py-2.5 rounded-xl font-bold cursor-pointer transition-colors ${
+                    isDark ? 'bg-slate-800 text-slate-300 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={customerSaving}
+                  className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-black cursor-pointer shadow-md shadow-teal-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {customerSaving ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Saving Account...</span>
+                    </>
+                  ) : (
+                    <span>Register Patient Account</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT PATIENT DETAILS & STATUS */}
+      {isEditCustomerModalOpen && selectedCustomerForEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-150">
+          <div className={`border rounded-2xl sm:rounded-3xl p-5 sm:p-7 w-full max-w-lg max-h-[92vh] overflow-y-auto my-auto space-y-4 shadow-2xl transition-all ${
+            isDark ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'
+          }`}>
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0">
+                  <Edit className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
+                    Edit Patient Profile & Status
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Update profile, contact records, and access status for <strong className="text-teal-600 dark:text-teal-400 font-mono">#{selectedCustomerForEdit.customer_id}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEditCustomerModalOpen(false);
+                  setSelectedCustomerForEdit(null);
+                }}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Close modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateCustomer} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                <div>
+                  <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Full Legal Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editCustomerForm.full_name}
+                    onChange={(e) => setEditCustomerForm({ ...editCustomerForm, full_name: e.target.value })}
+                    className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Email Address *</label>
+                  <input
+                    type="email"
+                    required
+                    value={editCustomerForm.email}
+                    onChange={(e) => setEditCustomerForm({ ...editCustomerForm, email: e.target.value })}
+                    className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                <div>
+                  <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">
+                    Reset Password <span className="text-[10px] text-slate-400 font-normal">(Optional)</span>
+                  </label>
+                  <input
+                    type="password"
+                    minLength={6}
+                    value={editCustomerForm.password}
+                    onChange={(e) => setEditCustomerForm({ ...editCustomerForm, password: e.target.value })}
+                    placeholder="Leave blank to retain password"
+                    className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Contact Phone</label>
+                  <input
+                    type="text"
+                    value={editCustomerForm.contact_no}
+                    onChange={(e) => setEditCustomerForm({ ...editCustomerForm, contact_no: e.target.value })}
+                    className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                <div>
+                  <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">National Identity Card (NIC)</label>
+                  <input
+                    type="text"
+                    value={editCustomerForm.nic}
+                    onChange={(e) => setEditCustomerForm({ ...editCustomerForm, nic: e.target.value })}
+                    className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Patient Age</label>
+                  <input
+                    type="text"
+                    value={editCustomerForm.patient_age}
+                    onChange={(e) => setEditCustomerForm({ ...editCustomerForm, patient_age: e.target.value })}
+                    className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Residential / Prescription Delivery Address</label>
+                <textarea
+                  rows={2}
+                  value={editCustomerForm.address}
+                  onChange={(e) => setEditCustomerForm({ ...editCustomerForm, address: e.target.value })}
+                  className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                    isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                  }`}
+                />
+              </div>
+
+              <div className="p-3.5 rounded-2xl border space-y-2.5 bg-slate-50 dark:bg-slate-950/80 border-slate-200 dark:border-slate-800">
+                <span className="font-bold text-slate-700 dark:text-slate-300 block">
+                  Account Status & Access Permissions
+                </span>
+                <div className="flex flex-wrap items-center gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="radio"
+                      name="customer_status"
+                      checked={editCustomerForm.is_active && editCustomerForm.status !== 'suspended'}
+                      onChange={() => setEditCustomerForm({ ...editCustomerForm, is_active: true, status: 'active' })}
+                      className="w-4 h-4 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                    />
+                    <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                      Active (Normal Site & Rx Access)
+                    </span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="radio"
+                      name="customer_status"
+                      checked={!editCustomerForm.is_active || editCustomerForm.status === 'suspended'}
+                      onChange={() => setEditCustomerForm({ ...editCustomerForm, is_active: false, status: 'suspended' })}
+                      className="w-4 h-4 text-rose-600 focus:ring-rose-500 cursor-pointer"
+                    />
+                    <span className="text-xs font-bold text-rose-600 dark:text-rose-400">
+                      Suspended (Disables Online Sign In)
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditCustomerModalOpen(false);
+                    setSelectedCustomerForEdit(null);
+                  }}
+                  className={`w-full sm:w-auto px-4 py-2.5 rounded-xl font-bold cursor-pointer transition-colors ${
+                    isDark ? 'bg-slate-800 text-slate-300 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={customerSaving}
+                  className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-black cursor-pointer shadow-md shadow-teal-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {customerSaving ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Saving Profile...</span>
+                    </>
+                  ) : (
+                    <span>Save Patient Profile</span>
+                  )}
                 </button>
               </div>
             </form>
