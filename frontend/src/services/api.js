@@ -238,5 +238,54 @@ export const updatePharmacySettings = async (data) => {
   return response.data;
 };
 
+// Promotions & Voucher Codes (MySQL-backed)
+export const getPromotions = async () => {
+  const response = await api.get('/promotions');
+  return response.data;
+};
+
+export const validatePromotion = async (code, order_amount) => {
+  const response = await api.post('/promotions/validate', { code, order_amount });
+  return response.data;
+};
+
+// Customer Reviews & Feedback (MySQL-backed)
+export const getReviews = async () => {
+  const response = await api.get('/reviews');
+  return response.data;
+};
+
+export const submitReview = async (reviewData) => {
+  const response = await api.post('/reviews', reviewData);
+  return response.data;
+};
+
+export const voteReviewHelpful = async (reviewId) => {
+  const response = await api.patch(`/reviews/${reviewId}/helpful`);
+  return response.data;
+};
+
+// Customer Contact Inquiries (MySQL-backed)
+export const submitInquiry = async (inquiryData) => {
+  const response = await api.post('/inquiries', inquiryData);
+  return response.data;
+};
+
+export const getInquiryStatus = async (refCode) => {
+  const response = await api.get(`/inquiries/${refCode}`);
+  return response.data;
+};
+
+// Admin Inquiries Management
+export const getAdminInquiries = async (status) => {
+  const response = await api.get('/admin/inquiries', { params: { status } });
+  return response.data;
+};
+
+export const updateAdminInquiryStatus = async (id, data) => {
+  const response = await api.patch(`/admin/inquiries/${id}/status`, data);
+  return response.data;
+};
+
 export default api;
 

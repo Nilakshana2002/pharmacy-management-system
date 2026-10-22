@@ -34,7 +34,9 @@ import {
   deleteCustomer,
   createCategory,
   createBrand,
-  updatePharmacySettings
+  updatePharmacySettings,
+  getInquiries,
+  updateInquiryStatus
 } from '../controllers/adminController.js';
 
 const router = express.Router();
@@ -95,6 +97,10 @@ router.post('/brands', requireRoles('ADMIN'), createBrand);
 
 // 10. Store Settings (ADMIN Only)
 router.put('/settings', requireRoles('ADMIN'), updatePharmacySettings);
+
+// 11. Customer Contact Inquiries (ADMIN & PHARMACIST)
+router.get('/inquiries', requireRoles('ADMIN', 'PHARMACIST'), getInquiries);
+router.patch('/inquiries/:id/status', requireRoles('ADMIN', 'PHARMACIST'), updateInquiryStatus);
 
 export default router;
 

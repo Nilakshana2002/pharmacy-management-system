@@ -14,21 +14,28 @@ export const PHARMACY_IMAGES = {
 
   // Therapeutic Categories photography
   categories: {
-    1: 'https://images.unsplash.com/photo-1471864190281-a93a3070b6de?auto=format&fit=crop&w=600&q=80', // Antibiotics (capsules/blisters)
-    2: 'https://images.unsplash.com/photo-1584017911766-d451b3d0e843?auto=format&fit=crop&w=600&q=80', // Pain relief / Analgesics
-    3: 'https://images.unsplash.com/photo-1505751172876-fa1923c5c528?auto=format&fit=crop&w=600&q=80', // Heart / Cardiovascular
-    4: 'https://images.unsplash.com/photo-1584362917165-526a968579e8?auto=format&fit=crop&w=600&q=80', // Respiratory / Inhaler
-    5: 'https://images.unsplash.com/photo-1550572017-edd951aa8f72?auto=format&fit=crop&w=600&q=80', // Gastrointestinal
-    6: 'https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=600&q=80', // Endocrine / Diabetes
-    7: 'https://images.unsplash.com/photo-1577401239170-897942555fb3?auto=format&fit=crop&w=600&q=80', // Vitamins & Supplements
-    8: 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=600&q=80', // Dermatology & Skincare
-    // Non-medicine Wellness & Diagnostics Categories
-    'nutrition': 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=600&q=80', // Diet & Nutrition
-    'beauty': 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=600&q=80', // Beauty Care & Cosmetics
-    'personal': 'https://images.unsplash.com/photo-1583947215259-38e31be8751f?auto=format&fit=crop&w=600&q=80', // Personal Care
-    'baby': 'https://images.unsplash.com/photo-1519689680058-324335c77eba?auto=format&fit=crop&w=600&q=80', // Baby Care
-    'devices': 'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=600&q=80', // Doctors Equipment & Medical Devices
-    'ayurveda': 'https://images.unsplash.com/photo-1617791160505-6f00504e3519?auto=format&fit=crop&w=600&q=80', // Ayurvedic Care
+    1: 'https://images.unsplash.com/photo-1471864190281-a93a3070b6de?auto=format&fit=crop&w=600&q=80', // Antibiotics & Antimicrobials (capsules/blisters)
+    2: 'https://images.unsplash.com/photo-1584017911766-d451b3d0e843?auto=format&fit=crop&w=600&q=80', // Analgesics & Pain Relief (pain relief tablets)
+    3: 'https://images.unsplash.com/photo-1505751172876-fa1923c5c528?auto=format&fit=crop&w=600&q=80', // Cardiovascular & Blood Pressure (stethoscope & heart)
+    4: 'https://images.unsplash.com/photo-1584362917165-526a968579e8?auto=format&fit=crop&w=600&q=80', // Respiratory & Allergy (inhaler & pulmonary)
+    5: 'https://images.unsplash.com/photo-1550572017-edd951aa8f72?auto=format&fit=crop&w=600&q=80', // Gastrointestinal & Antacids (digestive soothing tablets)
+    6: 'https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=600&q=80', // Endocrine & Antidiabetic (glucometer & insulin therapy)
+    7: 'https://images.unsplash.com/photo-1577401239170-897942555fb3?auto=format&fit=crop&w=600&q=80', // Vitamins & Dietary Supplements (vitamin C & multivitamin capsules)
+    8: 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=600&q=80', // Dermatology & Skin Care (medical skin creams & tubes)
+    // Non-medicine Wellness & Diagnostics Categories (Numeric IDs in Database)
+    9: 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=600&q=80', // Diet & Nutrition (protein powders & fitness nutrition)
+    10: 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=600&q=80', // Beauty Care & Cosmetics (skincare serums & cosmetics)
+    11: 'https://images.unsplash.com/photo-1583947215259-38e31be8751f?auto=format&fit=crop&w=600&q=80', // Personal Care & Hygiene (hygiene wash, sanitizer & antiseptic)
+    12: 'https://images.unsplash.com/photo-1519689680058-324335c77eba?auto=format&fit=crop&w=600&q=80', // Baby & Mother Care (pediatric gentle care & baby lotion)
+    13: 'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=600&q=80', // Medical Devices & Equipment (digital diagnostic tools & stethoscopes)
+    14: 'https://images.unsplash.com/photo-1617791160505-6f00504e3519?auto=format&fit=crop&w=600&q=80', // Ayurvedic & Herbal Care (authentic herbal leaves, pestle & mortar)
+    // Named String Aliases
+    'nutrition': 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=600&q=80',
+    'beauty': 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=600&q=80',
+    'personal': 'https://images.unsplash.com/photo-1583947215259-38e31be8751f?auto=format&fit=crop&w=600&q=80',
+    'baby': 'https://images.unsplash.com/photo-1519689680058-324335c77eba?auto=format&fit=crop&w=600&q=80',
+    'devices': 'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=600&q=80',
+    'ayurveda': 'https://images.unsplash.com/photo-1617791160505-6f00504e3519?auto=format&fit=crop&w=600&q=80',
     default: 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&w=600&q=80'
   },
 
@@ -79,7 +86,20 @@ export const SPECIFIC_MEDICINE_PHOTOS = {
   24: encodeURI('/medicines/Cevit 500mg Chewable.jpg'),
   25: encodeURI('/medicines/Ostocalcium D3.jpg'),
   26: encodeURI('/medicines/Neurobion Forte.jpg'),
-  27: encodeURI('/medicines/Fucidin Cream 2%.jpg'),
+  27: '/medicines/Fucidin Cream 2.jpg',
+  28: '/medicines/3M Littmann Classic III Stethoscope Smoke_Black Tube.jpg',
+  29: '/medicines/Omron 2-in-1 Max Blood Glucose & BP Monitor.jpg',
+  30: '/medicines/Certified 3-Ply Protective Face Masks (Box of 50).jpg',
+  31: '/medicines/Accu-Chek Active Blood Glucose Test Strips (50 Strips).jpg',
+  32: '/medicines/Optimum Nutrition Gold Standard 100 Whey (2 lbs).jpg',
+  33: '/medicines/CeraVe Hydrating Facial Cleanser for Normal to Dry Skin.jpg',
+  34: '/medicines/La Roche-Posay Anthelios UVMune 400 Invisible Fluid SPF 50.jpg',
+  35: '/medicines/Sebamed Baby Wash Extra Soft 200ml.jpg',
+  36: '/medicines/Dettol Antiseptic Disinfectant Liquid 750ml.jpg',
+  37: '/medicines/Wellman 50+ Comprehensive Multivitamin & Minerals (30 Tablets).jpg',
+  38: '/medicines/Siddhalepa Herbal Balm 50g Original Ayur Formula.jpg',
+  39: '/medicines/Omron Ultrasonic Mesh Nebulizer MicroAir NE-U100.jpg',
+  40: '/medicines/Omron Ultrasonic Mesh Nebulizer MicroAir NE-U100.jpg',
 
   // Matched by Normalized Trade Name (Lowercased)
   'augmentin 625mg': encodeURI('/medicines/Augmentin 625mg.webp'),
@@ -134,16 +154,16 @@ export const SPECIFIC_MEDICINE_PHOTOS = {
   'ostocalcium': encodeURI('/medicines/Ostocalcium D3.jpg'),
   'neurobion forte': encodeURI('/medicines/Neurobion Forte.jpg'),
   'neurobion': encodeURI('/medicines/Neurobion Forte.jpg'),
-  'fucidin cream 2%': encodeURI('/medicines/Fucidin Cream 2%.jpg'),
-  'fucidin cream': encodeURI('/medicines/Fucidin Cream 2%.jpg'),
-  'fucidin': encodeURI('/medicines/Fucidin Cream 2%.jpg'),
+  'fucidin cream 2%': '/medicines/Fucidin Cream 2.jpg',
+  'fucidin cream': '/medicines/Fucidin Cream 2.jpg',
+  'fucidin': '/medicines/Fucidin Cream 2.jpg',
 
-  // Wellness, Diagnostic Devices, Nutrition & Personal Care (Exact User Filenames)
-  'optimum nutrition gold standard 100% whey (2 lbs)': encodeURI('/medicines/Optimum Nutrition Gold Standard 100% Whey (2 lbs).jpg'),
-  'optimum nutrition gold standard 100% whey': encodeURI('/medicines/Optimum Nutrition Gold Standard 100% Whey (2 lbs).jpg'),
-  'optimum nutrition gold': encodeURI('/medicines/Optimum Nutrition Gold Standard 100% Whey (2 lbs).jpg'),
-  'optimum nutrition': encodeURI('/medicines/Optimum Nutrition Gold Standard 100% Whey (2 lbs).jpg'),
-  'whey protein': encodeURI('/medicines/Optimum Nutrition Gold Standard 100% Whey (2 lbs).jpg'),
+  // Wellness, Diagnostic Devices, Nutrition & Personal Care (Exact Safe Filenames)
+  'optimum nutrition gold standard 100% whey (2 lbs)': '/medicines/Optimum Nutrition Gold Standard 100 Whey (2 lbs).jpg',
+  'optimum nutrition gold standard 100% whey': '/medicines/Optimum Nutrition Gold Standard 100 Whey (2 lbs).jpg',
+  'optimum nutrition gold': '/medicines/Optimum Nutrition Gold Standard 100 Whey (2 lbs).jpg',
+  'optimum nutrition': '/medicines/Optimum Nutrition Gold Standard 100 Whey (2 lbs).jpg',
+  'whey protein': '/medicines/Optimum Nutrition Gold Standard 100 Whey (2 lbs).jpg',
 
   'wellman 50+ comprehensive multivitamin & minerals (30 tablets)': encodeURI('/medicines/Wellman 50+ Comprehensive Multivitamin & Minerals (30 Tablets).jpg'),
   'wellman 50+ comprehensive multivitamin & minerals': encodeURI('/medicines/Wellman 50+ Comprehensive Multivitamin & Minerals (30 Tablets).jpg'),
@@ -198,12 +218,59 @@ export const SPECIFIC_MEDICINE_PHOTOS = {
 };
 
 /**
+ * Sanitizes image URLs to prevent Vite URI malformed errors caused by unescaped '%' or '+' in filenames
+ */
+export function sanitizeMedicineImageUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  const clean = url.trim();
+
+  if (clean.includes('Fucidin') && (clean.includes('2%') || clean.includes('25') || clean.includes('Cream'))) {
+    return '/medicines/Fucidin Cream 2.jpg';
+  }
+  if (clean.includes('Optimum') || clean.includes('Whey') || clean.includes('100%')) {
+    return '/medicines/Optimum Nutrition Gold Standard 100 Whey (2 lbs).jpg';
+  }
+  if (clean.includes('Anthelios') || clean.includes('Roche')) {
+    return '/medicines/La Roche-Posay Anthelios UVMune 400 Invisible Fluid SPF 50.jpg';
+  }
+  if (clean.includes('Face Masks') || clean.includes('3-Ply')) {
+    return '/medicines/Certified 3-Ply Protective Face Masks (Box of 50).jpg';
+  }
+  if (clean.includes('Accu-Chek') || clean.includes('Active Blood Glucose')) {
+    return '/medicines/Accu-Chek Active Blood Glucose Test Strips (50 Strips).jpg';
+  }
+  if (clean.includes('Wellman')) {
+    return '/medicines/Wellman 50+ Comprehensive Multivitamin & Minerals (30 Tablets).jpg';
+  }
+  if (clean.includes('Nebulizer') || clean.includes('NE-U100') || clean.includes('MicroAir')) {
+    return '/medicines/Omron Ultrasonic Mesh Nebulizer MicroAir NE-U100.jpg';
+  }
+  if (clean.includes('Siddhalepa')) {
+    return '/medicines/Siddhalepa Herbal Balm 50g Original Ayur Formula.jpg';
+  }
+
+  // Remove any stray unescaped % or + that might break Vite's decodeURI
+  if (clean.startsWith('/medicines/') && clean.includes('%')) {
+    return clean.replace(/%/g, '');
+  }
+
+  return clean;
+}
+
+/**
  * Returns an appropriate product image based on real photos, dosage form, or category
  */
 export function getMedicineProductImage(medicine) {
   if (!medicine) return PHARMACY_IMAGES.dosageForms.default;
 
-  // 1. Direct photo lookup by Database Primary Key (number or string)
+  // 1. PRIMARY SOURCE OF TRUTH: MySQL Database Attribute (medicines.image_url)
+  // Ensures relational data independence: Admins adding/editing medicine images via Dashboard take immediate effect
+  if (medicine.image_url && typeof medicine.image_url === 'string' && medicine.image_url.trim().length > 0) {
+    const sanitized = sanitizeMedicineImageUrl(medicine.image_url);
+    if (sanitized) return sanitized;
+  }
+
+  // 2. Direct photo lookup by Database Primary Key (number or string)
   const medId = Number(medicine.medicine_id);
   if (medId && SPECIFIC_MEDICINE_PHOTOS[medId]) {
     return SPECIFIC_MEDICINE_PHOTOS[medId];
@@ -272,10 +339,8 @@ export function getMedicineProductImage(medicine) {
 
   // 5. Custom database URL if explicitly saved on the record
   if (medicine.image_url) {
-    if (medicine.image_url.includes('Anthelios') || medicine.image_url.includes('Roche')) {
-      return encodeURI('/medicines/La Roche-Posay Anthelios UVMune 400 Invisible Fluid SPF 50.jpg');
-    }
-    return medicine.image_url;
+    const sanitized = sanitizeMedicineImageUrl(medicine.image_url);
+    if (sanitized) return sanitized;
   }
   
   // 5. Automatic fallbacks based on dosage form
@@ -299,8 +364,68 @@ export function getMedicineProductImage(medicine) {
 }
 
 /**
- * Returns a high-res category image
+ * Returns a high-res specific category image matching by ID, object, or category name
  */
-export function getCategoryImage(categoryId) {
-  return PHARMACY_IMAGES.categories[categoryId] || PHARMACY_IMAGES.categories.default;
+export function getCategoryImage(categoryInput, categoryName = '') {
+  if (!categoryInput && !categoryName) return PHARMACY_IMAGES.categories.default;
+
+  // 1. Direct object passed: { category_id, category_name, image_url }
+  if (typeof categoryInput === 'object' && categoryInput !== null) {
+    if (categoryInput.image_url) return categoryInput.image_url;
+    categoryName = categoryName || categoryInput.category_name || '';
+    categoryInput = categoryInput.category_id || categoryInput.id;
+  }
+
+  // 2. Direct ID lookup in dictionary (numbers 1-14 or string keys)
+  if (categoryInput && PHARMACY_IMAGES.categories[categoryInput]) {
+    return PHARMACY_IMAGES.categories[categoryInput];
+  }
+
+  // 3. Fallback name-based semantic matching
+  const name = String(categoryName || categoryInput || '').toLowerCase().trim();
+
+  if (name.includes('ayurv') || name.includes('herbal')) {
+    return PHARMACY_IMAGES.categories[14] || PHARMACY_IMAGES.categories.ayurveda;
+  }
+  if (name.includes('baby') || name.includes('mother') || name.includes('pediatric')) {
+    return PHARMACY_IMAGES.categories[12] || PHARMACY_IMAGES.categories.baby;
+  }
+  if (name.includes('device') || name.includes('equipment') || name.includes('diagnost') || name.includes('doctor')) {
+    return PHARMACY_IMAGES.categories[13] || PHARMACY_IMAGES.categories.devices;
+  }
+  if (name.includes('personal') || name.includes('hygiene') || name.includes('antiseptic')) {
+    return PHARMACY_IMAGES.categories[11] || PHARMACY_IMAGES.categories.personal;
+  }
+  if (name.includes('beauty') || name.includes('cosmetic') || name.includes('face') || name.includes('skincare')) {
+    return PHARMACY_IMAGES.categories[10] || PHARMACY_IMAGES.categories.beauty;
+  }
+  if (name.includes('diet') || name.includes('nutrition') || name.includes('protein') || name.includes('fitness')) {
+    return PHARMACY_IMAGES.categories[9] || PHARMACY_IMAGES.categories.nutrition;
+  }
+  if (name.includes('derma') || name.includes('skin')) {
+    return PHARMACY_IMAGES.categories[8];
+  }
+  if (name.includes('vitamin') || name.includes('supplement') || name.includes('mineral')) {
+    return PHARMACY_IMAGES.categories[7];
+  }
+  if (name.includes('endocrine') || name.includes('diabet') || name.includes('insulin')) {
+    return PHARMACY_IMAGES.categories[6];
+  }
+  if (name.includes('gastro') || name.includes('antacid') || name.includes('stomach') || name.includes('digest')) {
+    return PHARMACY_IMAGES.categories[5];
+  }
+  if (name.includes('respir') || name.includes('asthma') || name.includes('allergy') || name.includes('inhal')) {
+    return PHARMACY_IMAGES.categories[4];
+  }
+  if (name.includes('cardio') || name.includes('heart') || name.includes('blood pressure') || name.includes('hypertens')) {
+    return PHARMACY_IMAGES.categories[3];
+  }
+  if (name.includes('analgesic') || name.includes('pain') || name.includes('fever')) {
+    return PHARMACY_IMAGES.categories[2];
+  }
+  if (name.includes('antibiotic') || name.includes('antimicrobial') || name.includes('infect')) {
+    return PHARMACY_IMAGES.categories[1];
+  }
+
+  return PHARMACY_IMAGES.categories.default;
 }

@@ -61,11 +61,12 @@ pharmacy-management-system/
 │   ├── package.json
 │   └── .env.example
 ├── database/                     # MySQL 8.0+ DDL, DML, and automation scripts
-│   ├── schema.sql                # Complete 3NF relational schema (15 tables)
-│   ├── routines.sql              # Stored Procedures (sp_create_pos_sale, etc.), Views, Triggers
-│   ├── seed.sql                  # Comprehensive sample data (medicines, batches, suppliers, sales, purchases)
-│   ├── migration_v2.sql          # Non-destructive MySQL migration script for existing databases
-│   └── setup.js                  # Automated migration and seed runner
+│   ├── schema.sql                # Complete 3NF relational schema (22 normalized tables)
+│   ├── routines.sql              # Stored Procedures (sp_create_pos_sale, etc.), 11 Views, Triggers, Functions, Events
+│   ├── seed.sql                  # Comprehensive sample data across all 22 tables
+│   ├── security.sql              # DCL User Management (Least Privilege, Password Locks, Resource Limits)
+│   ├── init_all.sql              # Consolidated monolithic single-click importer for Workbench/phpMyAdmin
+│   └── setup.js                  # Automated migration, seed runner, and verification script
 ├── docs/                         # ADBMS Coursework Documentation Deliverables
 │   ├── er_diagram.md             # Mermaid 3NF Entity-Relationship Diagram & Table Specifications
 │   ├── api_documentation.md      # REST API endpoints, request/response specifications
@@ -83,21 +84,25 @@ pharmacy-management-system/
 
 ---
 
-### 2. Database Migration Options
+### 2. Database Initialization Options
 
-#### Option A: Non-Destructive Update (Recommended for existing data)
-Open **MySQL Workbench** or command-line client, connect to your MySQL server, and execute:
-```sql
-SOURCE c:/Users/tharu/Desktop/adbms/pharmacy-management-system/database/migration_v2.sql;
-```
-This script safely creates missing tables (`purchases`, `purchase_items`, `sales`, `sale_items`, `sale_item_batches`, `payments`), missing views (`v_daily_sales`, `v_monthly_sales`, `v_sales_by_medicine`, `v_payment_summary`), and the atomic POS sale stored procedure `sp_create_pos_sale` without dropping any of your existing records.
-
-#### Option B: Fresh Installation from Scratch
-To recreate the complete database with sample data:
+#### Option A: Automated Single-Command Setup (Recommended)
+From the project root:
 ```bash
-cd backend
-node setup.js
+npm run db:setup
 ```
+This script reads your `backend/.env`, connects to MySQL, and executes `schema.sql`, `routines.sql`, `seed.sql`, and `security.sql` in sequence. It prints a complete verification table of record counts for all 22 entities and provisioned MySQL DCL accounts.
+
+#### Option B: Single-Click Monolithic SQL Import (MySQL Workbench / phpMyAdmin)
+Open **MySQL Workbench**, **phpMyAdmin**, or command-line client, connect to your MySQL server, and execute:
+```sql
+SOURCE c:/Users/tharu/Desktop/adbms/pharmacy-management-system/database/init_all.sql;
+```
+Or via terminal:
+```bash
+mysql -u root -p < database/init_all.sql
+```
+This single master script creates the `pharmacy_db` database, defines all 22 normalized tables, builds all stored procedures, views, triggers, and scheduled events, populates sample data, and provisions the least-privilege security accounts.
 
 ---
 
@@ -107,8 +112,9 @@ node setup.js
    PORT=5000
    DB_HOST=localhost
    DB_PORT=3306
-   DB_USER=root
-   DB_PASSWORD=your_password
+   # Enterprise Least-Privilege Account (provisioned by security.sql)
+   DB_USER=pharmacy_app
+   DB_PASSWORD=PharmacyApp@2026!
    DB_NAME=pharmacy_db
    JWT_SECRET=supersecret_mypharmacist_jwt_key_2026
    ```
@@ -131,7 +137,27 @@ node setup.js
 
 ---
 
-## 🔐 Staff Access & Role-Based Credentials
+## 🛡️ Database Accounts & Security Architecture (ADBMS Sections 9 & 10)
+
+The system implements the **Principle of Least Privilege** using MySQL Data Control Language (DCL):
+
+| MySQL User Account | Host Binding | Granted Privileges | Restricted Actions (Blocked by Engine) | Real System Activity |
+|---|---|---|---|---|
+| **`pharmacy_app`** | `@'localhost'` | `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `EXECUTE` on routines | **Denied all DDL** (`DROP`, `ALTER`, `TRUNCATE`). Cannot modify structure. | Express Web Backend runtime queries & POS sales. |
+| **`pharmacy_admin`** | `@'localhost'` | `ALL PRIVILEGES` on `pharmacy_db.*` with `GRANT OPTION` | Password expires every 90 days; 3 failed login lock. | Lead DBA structural schema migrations & backups. |
+| **`pharmacy_auditor`** | `@'localhost'` | `SELECT` on Views (`v_*`) and `audit_logs` | **Denied all DML & DDL** (cannot insert, update, or delete). | Regulatory compliance & financial inspection. |
+
+### MySQL Engine Security Controls (Section 9):
+1. **Host Binding:** Restricted to `@'localhost'` to reject remote network intrusion attempts.
+2. **Brute-Force Account Lockout:** `FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 1` locks attacker accounts after 3 failed attempts.
+3. **Resource Limits:** `MAX_CONNECTIONS_PER_HOUR 2000 MAX_USER_CONNECTIONS 50` protects against connection pool exhaustion / DoS attacks.
+4. **Data Hiding & Abstraction:** Public catalog queries consume `v_medicine_catalog` where wholesale supplier costs and trade margins are completely hidden.
+5. **Non-Repudiation Audit Trails:** Trigger `trg_after_batch_stock_update` generates immutable JSON snapshots into `audit_logs`.
+6. **SQL Injection Immunity:** 100% of application queries utilize parameterized prepared statements (`?` placeholders).
+
+---
+
+## 🔐 Staff Access & Role-Based Credentials (Application Level)
 
 | Role | Username / Identifier | Default Password | Permissions |
 |---|---|---|---|
@@ -144,9 +170,10 @@ node setup.js
 ## 📋 Coursework Compliance Checklist
 
 - [x] **No TypeScript migration:** Pure JavaScript (JSX) on frontend, ES Modules on backend.
-- [x] **No customer online checkout / payment gateways:** Strict inquiry slip generator with print styling.
-- [x] **3NF Database Normalization:** 15 normalized tables, foreign keys with referential actions.
+- [x] **22 Normalized 3NF Relational Tables:** `medicines`, `batches`, `customers`, `prescription_files`, `promotions`, `reviews`, `inquiries`.
 - [x] **Atomic Transactions:** Row-level pessimistic locking (`FOR UPDATE`) in POS sales with rollback on stock shortage.
-- [x] **MySQL Stored Routines:** Stored procedures (`sp_create_pos_sale`, `sp_receive_new_batch`, `sp_update_batch_stock`, `sp_get_inventory_summary`), views, and functions.
-- [x] **Automated Trigger Auditing:** `trg_after_batch_stock_update` captures old and new states in `audit_logs`.
+- [x] **MySQL Stored Routines:** 4 Stored procedures (`sp_create_pos_sale`, `sp_update_batch_stock`, `sp_receive_new_batch`, `sp_get_inventory_summary`), 2 Functions, 11 Views.
+- [x] **Database Security & DCL Users:** `pharmacy_app`, `pharmacy_admin`, `pharmacy_auditor` with least privilege and brute-force locks.
+- [x] **Automated Trigger Auditing:** `trg_after_batch_stock_update` captures JSON snapshots in `audit_logs`.
+- [x] **MySQL Scheduled Events:** `ev_daily_quarantine_expired_batches` and `ev_weekly_system_maintenance`.
 - [x] **Security:** Bcrypt password hashing, JWT stateless authentication, role-based route guards.

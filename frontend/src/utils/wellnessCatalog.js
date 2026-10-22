@@ -150,7 +150,7 @@ export const WELLNESS_PRODUCTS = [
     is_offer: true,
     discount_percent: 15,
     is_wellness: true,
-    image_url: encodeURI('/medicines/Optimum Nutrition Gold Standard 100% Whey (2 lbs).jpg')
+    image_url: '/medicines/Optimum Nutrition Gold Standard 100 Whey (2 lbs).jpg'
   },
   {
     medicine_id: 106,

@@ -12,6 +12,9 @@ import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin.js';
 import customersRoutes from './routes/customers.js';
 import prescriptionOrdersRoutes from './routes/prescriptionOrders.js';
+import promotionsRoutes from './routes/promotions.js';
+import reviewsRoutes from './routes/reviews.js';
+import inquiriesRoutes from './routes/inquiries.js';
 
 dotenv.config();
 
@@ -30,6 +33,10 @@ app.use('/api/brands', brandsRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/customers', customersRoutes);
 app.use('/api/prescription-orders', prescriptionOrdersRoutes);
+app.use('/api/promotions', promotionsRoutes);
+app.use('/api/coupons', promotionsRoutes); // Alias for coupon lookups
+app.use('/api/reviews', reviewsRoutes);
+app.use('/api/inquiries', inquiriesRoutes);
 
 // Mount Authentication & Admin Management Endpoints
 app.use('/api/auth', authRoutes);

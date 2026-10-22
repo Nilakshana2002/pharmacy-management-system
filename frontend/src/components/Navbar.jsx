@@ -279,17 +279,6 @@ export default function Navbar({
                 </span>
               </button>
 
-              {/* 5. About Us */}
-              <button
-                onClick={() => handleNavClick('about')}
-                className={`px-2 sm:px-2.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  activePage === 'about'
-                    ? isDark ? 'bg-teal-500/15 text-teal-300 border border-teal-500/30' : 'bg-teal-50 text-teal-800 border border-teal-200 font-extrabold'
-                    : isDark ? 'text-slate-300 hover:text-white hover:bg-slate-900/70' : 'text-slate-700 hover:text-teal-700 hover:bg-slate-100/80'
-                }`}
-              >
-                About
-              </button>
 
               {/* 6. Contact Us */}
               <button
@@ -651,7 +640,6 @@ export default function Navbar({
                 { id: 'search', label: 'Browse Medicines & Stock' },
                 { id: 'wellness', label: 'Beauty & Wellness', isWellness: true },
                 { id: 'offers', label: 'Special Offers & Deals', isOffer: true },
-                { id: 'about', label: 'About Us' },
                 { id: 'contact', label: 'Contact Us' }
               ].map((item) => (
                 <button

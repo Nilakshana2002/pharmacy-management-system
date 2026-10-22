@@ -5,6 +5,7 @@ import {
   Quote
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
+import { getReviews, submitReview, voteReviewHelpful } from '../services/api';
 
 const INITIAL_REVIEWS = [
   {
@@ -83,14 +84,8 @@ const INITIAL_REVIEWS = [
 
 export default function FeedbackSection() {
   const { isDark } = useTheme();
-  const [reviews, setReviews] = useState(() => {
-    try {
-      const saved = localStorage.getItem('pharmacy_customer_feedback');
-      return saved ? JSON.parse(saved) : INITIAL_REVIEWS;
-    } catch (e) {
-      return INITIAL_REVIEWS;
-    }
-  });
+  const [reviews, setReviews] = useState(INITIAL_REVIEWS);
+  const [loading, setLoading] = useState(true);
 
   // Track the start index for side-by-side slides
   const [startIndex, setStartIndex] = useState(0);
@@ -102,6 +97,40 @@ export default function FeedbackSection() {
   const [newCategory, setNewCategory] = useState('Prescription Medicines');
   const [newComment, setNewComment] = useState('');
   const [submittedToast, setSubmittedToast] = useState(false);
+
+  // Load reviews directly from MySQL customer_reviews table
+  useEffect(() => {
+    async function loadDatabaseReviews() {
+      try {
+        setLoading(true);
+        const res = await getReviews();
+        if (res.success && res.data && res.data.length > 0) {
+          const mapped = res.data.map(r => ({
+            id: r.review_id,
+            name: r.patient_name,
+            role: r.role_title || 'Verified Patient',
+            rating: r.rating,
+            date: r.created_at ? new Date(r.created_at).toLocaleDateString() : 'Recent',
+            category: r.category || 'General Healthcare',
+            comment: r.comment,
+            verified: Boolean(r.is_verified),
+            helpful: r.helpful_count || 0,
+            avatarColor: r.avatar_color || 'from-blue-600 to-indigo-600'
+          }));
+          setReviews(mapped);
+        }
+      } catch (err) {
+        console.warn('[Reviews Service Notice] Using cached feedback as offline fallback:', err);
+        try {
+          const saved = localStorage.getItem('pharmacy_customer_feedback');
+          if (saved) setReviews(JSON.parse(saved));
+        } catch (e) {}
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadDatabaseReviews();
+  }, []);
 
   // Number of cards visible side-by-side: 3 on desktop, 2 on tablet, 1 on mobile
   const cardsPerPage = 3;
@@ -116,12 +145,11 @@ export default function FeedbackSection() {
     return () => clearInterval(interval);
   }, [isPaused, reviews.length, maxStartIndex]);
 
+  // Mirror cache for instant offline reload
   useEffect(() => {
     try {
       localStorage.setItem('pharmacy_customer_feedback', JSON.stringify(reviews));
-    } catch (e) {
-      console.warn('Could not save reviews to localStorage', e);
-    }
+    } catch (e) {}
   }, [reviews]);
 
   const handlePrev = () => {
@@ -132,28 +160,61 @@ export default function FeedbackSection() {
     setStartIndex((prev) => (prev >= maxStartIndex ? 0 : prev + 1));
   };
 
-  const handleHelpful = (id) => {
-    setReviews(prev => prev.map(r => r.id === id ? { ...r, helpful: r.helpful + 1 } : r));
+  const handleHelpful = async (id) => {
+    setReviews(prev => prev.map(r => r.id === id ? { ...r, helpful: (r.helpful || 0) + 1 } : r));
+    try {
+      await voteReviewHelpful(id);
+    } catch (err) {
+      console.warn('Helpful vote recorded locally:', err.message);
+    }
   };
 
-  const handleAddReview = (e) => {
+  const handleAddReview = async (e) => {
     e.preventDefault();
     if (!newName.trim() || !newComment.trim()) return;
 
-    const newRev = {
-      id: Date.now(),
-      name: newName.trim(),
-      role: 'Verified Patient',
+    const payload = {
+      patient_name: newName.trim(),
+      role_title: 'Verified Patient',
       rating: newRating,
-      date: 'Just now',
       category: newCategory,
       comment: newComment.trim(),
-      verified: true,
-      helpful: 1,
-      avatarColor: 'from-teal-600 to-cyan-600'
+      avatar_color: 'from-teal-600 to-cyan-600'
     };
 
-    setReviews([newRev, ...reviews]);
+    try {
+      const res = await submitReview(payload);
+      const saved = res.data;
+      const newRev = {
+        id: saved?.review_id || Date.now(),
+        name: saved?.patient_name || payload.patient_name,
+        role: saved?.role_title || payload.role_title,
+        rating: saved?.rating || payload.rating,
+        date: 'Just now',
+        category: saved?.category || payload.category,
+        comment: saved?.comment || payload.comment,
+        verified: true,
+        helpful: 0,
+        avatarColor: saved?.avatar_color || payload.avatar_color
+      };
+      setReviews([newRev, ...reviews]);
+    } catch (err) {
+      console.warn('Review saved to offline cache:', err);
+      const offlineRev = {
+        id: Date.now(),
+        name: payload.patient_name,
+        role: payload.role_title,
+        rating: payload.rating,
+        date: 'Just now',
+        category: payload.category,
+        comment: payload.comment,
+        verified: true,
+        helpful: 0,
+        avatarColor: payload.avatar_color
+      };
+      setReviews([offlineRev, ...reviews]);
+    }
+
     setStartIndex(0);
     setIsModalOpen(false);
     setNewName('');

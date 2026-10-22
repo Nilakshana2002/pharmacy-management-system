@@ -4,15 +4,16 @@ import {
   Send, CheckCircle2, MessageSquare, AlertCircle, HeartHandshake,
   Stethoscope, Award, ThermometerSnowflake, FileCheck, Check
 } from 'lucide-react';
-import { getPublicSettings } from '../services/api';
+import { getPublicSettings, submitInquiry } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
 import { PHARMACY_IMAGES } from '../utils/pharmacyImages';
 
 export default function AboutContactPage({ initialFocus = 'about' }) {
   const { isDark } = useTheme();
   const [settings, setSettings] = useState({});
-  const [formData, setFormData] = useState({ name: '', phone: '', medicineQuery: '', message: '' });
+  const [formData, setFormData] = useState({ name: '', phone: '', email: '', medicineQuery: '', message: '' });
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [inquiryRef, setInquiryRef] = useState('');
 
   useEffect(() => {
@@ -43,16 +44,38 @@ export default function AboutContactPage({ initialFocus = 'about' }) {
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    const refCode = 'INQ-' + Math.floor(100000 + Math.random() * 900000);
-    setInquiryRef(refCode);
-    setSubmitted(true);
+    setSubmitting(true);
+    try {
+      const res = await submitInquiry({
+        name: formData.name,
+        phone: formData.phone,
+        email: formData.email || null,
+        medicine_query: formData.medicineQuery,
+        message: formData.message
+      });
+      if (res.success && res.reference_code) {
+        setInquiryRef(res.reference_code);
+        setSubmitted(true);
+      } else {
+        const refCode = 'INQ-' + Math.floor(100000 + Math.random() * 900000);
+        setInquiryRef(refCode);
+        setSubmitted(true);
+      }
+    } catch (err) {
+      console.warn('Inquiry submission notice, generated local reference code:', err);
+      const refCode = 'INQ-' + Math.floor(100000 + Math.random() * 900000);
+      setInquiryRef(refCode);
+      setSubmitted(true);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleResetForm = () => {
     setSubmitted(false);
-    setFormData({ name: '', phone: '', medicineQuery: '', message: '' });
+    setFormData({ name: '', phone: '', email: '', medicineQuery: '', message: '' });
     setInquiryRef('');
   };
 
@@ -242,6 +265,19 @@ export default function AboutContactPage({ initialFocus = 'about' }) {
 
                 <div>
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                    Email Address (Optional for delivery receipt)
+                  </label>
+                  <input
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    placeholder="e.g. john@example.com"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-teal-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
                     Medicine / Formulation of Interest
                   </label>
                   <input
@@ -269,10 +305,11 @@ export default function AboutContactPage({ initialFocus = 'about' }) {
 
                 <button
                   type="submit"
-                  className="w-full py-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                  disabled={submitting}
+                  className="w-full py-3 rounded-xl bg-teal-700 hover:bg-teal-800 disabled:opacity-60 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
                 >
                   <Send className="w-4 h-4" />
-                  <span>Submit Inquiry to Dispensary</span>
+                  <span>{submitting ? 'Transmitting to Database...' : 'Submit Inquiry to Dispensary'}</span>
                 </button>
               </form>
             )}

@@ -43,9 +43,49 @@ export const ensurePrescriptionOrdersTable = async () => {
     `;
     await pool.query(createSql);
 
+    // Ensure normalized 3NF child table prescription_files exists
+    const createFilesSql = `
+      CREATE TABLE IF NOT EXISTS prescription_files (
+        file_id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id VARCHAR(50) NOT NULL,
+        file_path VARCHAR(255) NULL,
+        file_name VARCHAR(255) NULL,
+        file_type VARCHAR(50) NULL,
+        file_size INT NULL,
+        file_data LONGTEXT NULL,
+        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_rx_files_order (order_id),
+        CONSTRAINT fk_rx_files_order FOREIGN KEY (order_id)
+          REFERENCES prescription_orders(order_id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `;
+    try {
+      await pool.query(createFilesSql);
+    } catch (fErr) {
+      // Table creation fallback if foreign key definition requires existing constraint
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS prescription_files (
+          file_id INT AUTO_INCREMENT PRIMARY KEY,
+          order_id VARCHAR(50) NOT NULL,
+          file_path VARCHAR(255) NULL,
+          file_name VARCHAR(255) NULL,
+          file_type VARCHAR(50) NULL,
+          file_size INT NULL,
+          file_data LONGTEXT NULL,
+          uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_rx_files_order (order_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+    }
+
     // Safely upgrade columns if table already existed with older schema
     try {
       await pool.query('ALTER TABLE prescription_orders MODIFY COLUMN files LONGTEXT');
+    } catch (e) {
+      // ignore
+    }
+    try {
+      await pool.query('ALTER TABLE prescription_orders ADD COLUMN files_count INT DEFAULT 0');
     } catch (e) {
       // ignore
     }
@@ -207,6 +247,44 @@ export const createPrescriptionOrder = async (req, res) => {
       filesJson,
       message ? message.trim() : null
     ]);
+
+    // Insert into normalized 3NF child entity: prescription_files
+    if (Array.isArray(files) && files.length > 0) {
+      for (const f of files) {
+        let filePath = null;
+        let fileName = null;
+        let fileType = null;
+        let fileSize = null;
+        let fileData = null;
+
+        if (typeof f === 'string') {
+          if (f.startsWith('data:')) {
+            fileData = f;
+            fileType = f.split(';')[0].replace('data:', '');
+            fileSize = f.length;
+            fileName = 'Prescription_Image';
+          } else {
+            filePath = f;
+            fileName = f.split('/').pop();
+          }
+        } else if (typeof f === 'object' && f !== null) {
+          fileName = f.name || f.fileName || 'Prescription_Document';
+          fileType = f.type || f.fileType || null;
+          fileSize = f.size || f.fileSize || null;
+          filePath = f.path || f.url || f.file_path || null;
+          fileData = f.data || f.fileData || (f.url && f.url.startsWith('data:') ? f.url : null);
+        }
+
+        try {
+          await pool.query(`
+            INSERT INTO prescription_files (order_id, file_path, file_name, file_type, file_size, file_data)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `, [finalOrderId, filePath, fileName, fileType, fileSize, fileData]);
+        } catch (fErr) {
+          console.warn('[Prescription Files Insert Notice]:', fErr.message);
+        }
+      }
+    }
 
     const newOrder = {
       order_id: finalOrderId,
