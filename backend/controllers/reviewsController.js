@@ -1,9 +1,13 @@
 import pool from '../config/db.js';
 
+let customerReviewsTableChecked = false;
+
 /**
  * Ensure customer_reviews table exists with baseline verified patient feedback
  */
 export async function ensureCustomerReviewsTable() {
+  if (customerReviewsTableChecked) return;
+  customerReviewsTableChecked = true;
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS customer_reviews (

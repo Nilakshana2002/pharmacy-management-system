@@ -13,6 +13,7 @@ let salesTablesChecked = false;
  */
 export const ensureSalesTables = async () => {
   if (salesTablesChecked) return;
+  salesTablesChecked = true;
   try {
     // 1. Ensure sales table
     await pool.query(`

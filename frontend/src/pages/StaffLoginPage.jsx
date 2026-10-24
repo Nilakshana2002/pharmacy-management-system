@@ -38,10 +38,10 @@ export default function StaffLoginPage({ onLoginSuccess, setActivePage }) {
 
   const autofill = (userType) => {
     if (userType === 'admin') {
-      setIdentifier('admin@vdcstore.com');
+      setIdentifier('admin');
       setPassword('admin123');
     } else {
-      setIdentifier('pharmacist@vdcstore.com');
+      setIdentifier('pharmacist');
       setPassword('pharma123');
     }
   };
@@ -83,7 +83,7 @@ export default function StaffLoginPage({ onLoginSuccess, setActivePage }) {
                 required
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
-                placeholder="pharmacist@mypharmacist.com"
+                placeholder="admin or pharmacist@vdcstore.lk"
                 className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 bg-slate-50 text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-teal-600 transition-colors"
               />
             </div>
@@ -151,6 +151,16 @@ export default function StaffLoginPage({ onLoginSuccess, setActivePage }) {
               <UserCog className="w-3.5 h-3.5" />
               <span>Admin</span>
             </button>
+          </div>
+          <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70 text-[11px] text-slate-500 space-y-1 font-mono">
+            <div className="flex justify-between">
+              <span>Admin: <strong className="text-slate-800">admin</strong></span>
+              <span className="text-teal-700 font-bold">admin123</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Staff: <strong className="text-slate-800">pharmacist</strong></span>
+              <span className="text-teal-700 font-bold">pharma123</span>
+            </div>
           </div>
         </div>
 

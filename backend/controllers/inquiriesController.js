@@ -1,10 +1,14 @@
 import pool from '../config/db.js';
 import crypto from 'crypto';
 
+let inquiriesTableChecked = false;
+
 /**
  * Ensure inquiries and notification_logs tables exist
  */
 export async function ensureInquiriesTable() {
+  if (inquiriesTableChecked) return;
+  inquiriesTableChecked = true;
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS inquiries (

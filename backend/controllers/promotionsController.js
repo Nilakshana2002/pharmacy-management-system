@@ -1,9 +1,13 @@
 import pool from '../config/db.js';
 
+let promotionsTableChecked = false;
+
 /**
  * Ensure promotions table exists with baseline records
  */
 export async function ensurePromotionsTable() {
+  if (promotionsTableChecked) return;
+  promotionsTableChecked = true;
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS promotions (

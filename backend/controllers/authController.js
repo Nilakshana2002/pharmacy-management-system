@@ -20,42 +20,63 @@ export const login = async (req, res) => {
     }
 
     const trimmedIdentifier = identifier.trim();
+    const usernamePrefix = trimmedIdentifier.includes('@') ? trimmedIdentifier.split('@')[0].trim() : trimmedIdentifier;
+    const vdcCom = `${usernamePrefix}@vdcstore.com`;
+    const vdcLk = `${usernamePrefix}@vdcstore.lk`;
 
-    // Lookup user by username or email
-    let rows;
+    // Lookup user by username or email (supporting username, .lk, .com, or prefix)
+    let sql = `
+      SELECT user_id, username, email, password_hash, role, full_name, is_active
+      FROM users
+      WHERE LOWER(username) = LOWER(?)
+         OR LOWER(email) = LOWER(?)
+         OR LOWER(email) = LOWER(?)
+         OR LOWER(email) = LOWER(?)
+         OR (LOWER(username) = LOWER(?) AND role IN ('ADMIN', 'PHARMACIST'))
+      LIMIT 1
+    `;
+
+    let rows = [];
     try {
-      const sql = `
-        SELECT user_id, username, email, password_hash, role, full_name, is_active, permissions
-        FROM users
-        WHERE (username = ? OR email = ?)
-        LIMIT 1
-      `;
-      [rows] = await pool.query(sql, [trimmedIdentifier, trimmedIdentifier]);
+      const [colPerm] = await pool.query("SHOW COLUMNS FROM users LIKE 'permissions'");
+      if (colPerm.length > 0) {
+        sql = `
+          SELECT user_id, username, email, password_hash, role, full_name, is_active, permissions
+          FROM users
+          WHERE LOWER(username) = LOWER(?)
+             OR LOWER(email) = LOWER(?)
+             OR LOWER(email) = LOWER(?)
+             OR LOWER(email) = LOWER(?)
+             OR (LOWER(username) = LOWER(?) AND role IN ('ADMIN', 'PHARMACIST'))
+          LIMIT 1
+        `;
+      }
+      [rows] = await pool.query(sql, [trimmedIdentifier, trimmedIdentifier, vdcCom, vdcLk, usernamePrefix]);
     } catch {
-      const sql = `
-        SELECT user_id, username, email, password_hash, role, full_name, is_active
-        FROM users
-        WHERE (username = ? OR email = ?)
-        LIMIT 1
-      `;
-      [rows] = await pool.query(sql, [trimmedIdentifier, trimmedIdentifier]);
+      try {
+        [rows] = await pool.query(sql, [trimmedIdentifier, trimmedIdentifier, vdcCom, vdcLk, usernamePrefix]);
+      } catch (fallbackQueryErr) {
+        console.warn('[User Query Notice]:', fallbackQueryErr.message);
+      }
     }
 
-    // If no user found, auto-seed default staff accounts if users table exists
+    // If no user found, ensure default admin/pharmacist accounts exist
     if (rows.length === 0) {
       try {
         const hashedAdmin = await bcrypt.hash('admin123', 10);
         const hashedPharma = await bcrypt.hash('pharma123', 10);
 
         await pool.query(`
-          INSERT IGNORE INTO users (user_id, username, email, password_hash, role, full_name, is_active)
+          INSERT INTO users (user_id, username, email, password_hash, role, full_name, is_active)
           VALUES 
-            (1, 'admin', 'admin@vdcstore.com', ?, 'ADMIN', 'Chief Pharmacy Administrator', TRUE),
-            (2, 'pharmacist', 'pharmacist@vdcstore.com', ?, 'PHARMACIST', 'Licensed Staff Pharmacist', TRUE)
+            (1, 'admin', 'admin@vdcstore.lk', ?, 'ADMIN', 'Chief Pharmacy Administrator', TRUE),
+            (2, 'pharmacist', 'pharmacist@vdcstore.lk', ?, 'PHARMACIST', 'Licensed Staff Pharmacist', TRUE)
+          ON DUPLICATE KEY UPDATE 
+            is_active = TRUE
         `, [hashedAdmin, hashedPharma]);
 
         // Retry lookup
-        const [recheckRows] = await pool.query(sql, [trimmedIdentifier, trimmedIdentifier]);
+        const [recheckRows] = await pool.query(sql, [trimmedIdentifier, trimmedIdentifier, vdcCom, vdcLk, usernamePrefix]);
         if (recheckRows.length > 0) {
           rows = recheckRows;
         }

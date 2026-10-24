@@ -4,10 +4,14 @@ import pool from '../config/db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'vdc_store_jwt_super_secret_key_2026_adbms';
 
+let customersTableChecked = false;
+
 /**
  * Ensures customers table exists in MySQL database and has all required columns
  */
 export const ensureCustomersTable = async () => {
+  if (customersTableChecked) return;
+  customersTableChecked = true;
   try {
     const createTableSql = `
       CREATE TABLE IF NOT EXISTS customers (
@@ -33,8 +37,8 @@ export const ensureCustomersTable = async () => {
         await pool.query("ALTER TABLE customers ADD COLUMN is_active BOOLEAN DEFAULT TRUE");
         console.log('[Customers Table Migration]: Added is_active column');
       }
-    } catch (migErr) {
-      console.warn('[Customers Table Migration is_active Notice]:', migErr.message);
+    } catch {
+      // ignore
     }
 
     // Migration Check: Ensure status column exists
@@ -44,8 +48,8 @@ export const ensureCustomersTable = async () => {
         await pool.query("ALTER TABLE customers ADD COLUMN status VARCHAR(20) DEFAULT 'active'");
         console.log('[Customers Table Migration]: Added status column');
       }
-    } catch (migErr) {
-      console.warn('[Customers Table Migration status Notice]:', migErr.message);
+    } catch {
+      // ignore
     }
 
     // Seed default customer if empty
@@ -66,8 +70,8 @@ export const ensureCustomersTable = async () => {
       ]);
       console.log('[Customers]: Seeded initial demo customer Kasun Perera');
     }
-  } catch (err) {
-    console.warn('[Customers Table Check Notice]:', err.message);
+  } catch {
+    // Schema is managed via database/schema.sql; DDL is intentionally denied to app user under least-privilege
   }
 };
 

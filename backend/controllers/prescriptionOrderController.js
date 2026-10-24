@@ -9,10 +9,14 @@ import {
   getMailOutbox 
 } from '../services/simpleMailService.js';
 
+let prescriptionOrdersTableEnsured = false;
+
 /**
  * Ensures prescription_orders table exists in MySQL database
  */
 export const ensurePrescriptionOrdersTable = async () => {
+  if (prescriptionOrdersTableEnsured) return;
+  prescriptionOrdersTableEnsured = true;
   try {
     const createSql = `
       CREATE TABLE IF NOT EXISTS prescription_orders (
@@ -61,8 +65,7 @@ export const ensurePrescriptionOrdersTable = async () => {
     `;
     try {
       await pool.query(createFilesSql);
-    } catch (fErr) {
-      // Table creation fallback if foreign key definition requires existing constraint
+    } catch {
       await pool.query(`
         CREATE TABLE IF NOT EXISTS prescription_files (
           file_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -77,26 +80,8 @@ export const ensurePrescriptionOrdersTable = async () => {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
     }
-
-    // Safely upgrade columns if table already existed with older schema
-    try {
-      await pool.query('ALTER TABLE prescription_orders MODIFY COLUMN files LONGTEXT');
-    } catch (e) {
-      // ignore
-    }
-    try {
-      await pool.query('ALTER TABLE prescription_orders ADD COLUMN files_count INT DEFAULT 0');
-    } catch (e) {
-      // ignore
-    }
-    try {
-      await pool.query('ALTER TABLE prescription_orders MODIFY COLUMN contact_no VARCHAR(50) NULL');
-      await pool.query('ALTER TABLE prescription_orders MODIFY COLUMN patient_name VARCHAR(150) NULL');
-    } catch (e) {
-      // ignore
-    }
-  } catch (err) {
-    console.warn('[Prescription Orders Table Check Notice]:', err.message);
+  } catch {
+    // Schema is managed via database/schema.sql; DDL is intentionally denied to app user under least-privilege
   }
 };
 
