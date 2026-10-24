@@ -3,6 +3,7 @@ import { Eye, Building2, Tag, ShieldCheck, Pill, ThermometerSnowflake, FileText,
 import AvailabilityBadge from './AvailabilityBadge';
 import { useTheme } from '../context/ThemeContext';
 import { getMedicineProductImage } from '../utils/pharmacyImages';
+import { getMedicinePricing } from '../utils/medicinePricing';
 
 export default function MedicineCard({ 
   medicine, 
@@ -24,12 +25,19 @@ export default function MedicineCard({
     'Ayurvedic & Herbal Care'
   ].includes(medicine.category_name);
 
-  const isOffer = Boolean(medicine.is_offer) && Number(medicine.discount_percent) > 0;
-  const rating = medicine.rating || 5;
-  const originalPrice = medicine.original_price || (isOffer 
-    ? (Number(medicine.unit_price) / (1 - Number(medicine.discount_percent)/100)) 
-    : null);
+  const {
+    isPublic,
+    isOffer,
+    regularPrice,
+    finalPrice,
+    discountPercent,
+    discountDeduction,
+    formattedFinalPrice,
+    formattedRegularPrice,
+    formattedDiscountDeduction
+  } = getMedicinePricing(medicine);
 
+  const rating = medicine.rating || 5;
   const productImage = imgError ? null : getMedicineProductImage(medicine);
 
   return (
@@ -39,12 +47,12 @@ export default function MedicineCard({
         : 'bg-white hover:bg-slate-50/50 border-slate-200/90 hover:border-teal-500/50 hover:shadow-xl hover:shadow-slate-200/70'
     }`}>
       
-      {/* Corner Sale Badge if on Offer (Screenshot 3 style) */}
+      {/* Corner Sale Badge if on Offer */}
       {isOffer && (
         <div className="absolute -top-2.5 -right-2.5 z-20">
-          <span className="px-2.5 py-1 rounded-full text-[10px] font-black tracking-wide uppercase bg-gradient-to-r from-amber-500 to-rose-500 text-white shadow-md flex items-center gap-1">
-            <span>SALE</span>
-            {medicine.discount_percent ? <span>-{medicine.discount_percent}%</span> : null}
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-black tracking-wide uppercase bg-gradient-to-r from-amber-500 via-rose-500 to-red-600 text-white shadow-md flex items-center gap-1">
+            <Sparkles className="w-2.5 h-2.5" />
+            <span>-{discountPercent}% OFF</span>
           </span>
         </div>
       )}
@@ -146,27 +154,32 @@ export default function MedicineCard({
       <div className={`pt-3.5 border-t flex items-center justify-between gap-2 ${
         isDark ? 'border-slate-800' : 'border-slate-100'
       }`}>
-        {/* Real Price Display with Strikethrough support */}
+        {/* Real Price Display with Strikethrough & Promotional Savings support */}
         <div>
-          {medicine.is_public_price && medicine.unit_price ? (
+          {isPublic && regularPrice > 0 ? (
             <div>
               <span className={`text-[10px] uppercase font-bold tracking-wider block ${
-                isDark ? 'text-slate-500' : 'text-slate-400'
+                isOffer ? 'text-rose-500 dark:text-rose-400 font-extrabold' : isDark ? 'text-slate-500' : 'text-slate-400'
               }`}>
-                Counter Price
+                {isOffer ? `Special Offer (-${discountPercent}%)` : 'Counter Price'}
               </span>
-              <div className="flex items-baseline gap-1.5">
+              <div className="flex items-baseline gap-1.5 flex-wrap">
                 <span className={`text-base font-black ${
                   isOffer ? 'text-rose-600 dark:text-rose-400' : isDark ? 'text-white' : 'text-slate-900'
                 }`}>
-                  Rs. {Number(medicine.unit_price).toFixed(2)}
+                  Rs. {formattedFinalPrice}
                 </span>
-                {originalPrice && originalPrice > medicine.unit_price && (
-                  <span className="text-xs text-slate-400 line-through">
-                    Rs. {Number(originalPrice).toFixed(2)}
+                {isOffer && (
+                  <span className="text-xs text-slate-400 line-through font-medium">
+                    Rs. {formattedRegularPrice}
                   </span>
                 )}
               </div>
+              {isOffer && discountDeduction > 0 && (
+                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 block -mt-0.5">
+                  Save Rs. {formattedDiscountDeduction}
+                </span>
+              )}
             </div>
           ) : (
             <div>

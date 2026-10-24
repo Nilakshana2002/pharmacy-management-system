@@ -8,10 +8,13 @@ const api = axios.create({
   }
 });
 
-// Interceptor to attach JWT token to staff/admin requests
+// Interceptor to attach JWT token to staff/admin or customer requests
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('vdc_staff_token');
+    const staffToken = localStorage.getItem('vdc_staff_token');
+    const customerToken = localStorage.getItem('pharmacy_customer_token');
+    // If request targets customer profile endpoints, use customerToken; otherwise staffToken
+    const token = config.url?.startsWith('/customers') ? (customerToken || staffToken) : (staffToken || customerToken);
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -80,6 +83,16 @@ export const createMedicine = async (data) => {
 
 export const updateMedicine = async (id, data) => {
   const response = await api.put(`/admin/medicines/${id}`, data);
+  return response.data;
+};
+
+export const uploadMedicineImage = async (data) => {
+  const response = await api.post('/admin/medicines/upload-image', data);
+  return response.data;
+};
+
+export const getMedicineLibraryImages = async () => {
+  const response = await api.get('/admin/medicines/library-images');
   return response.data;
 };
 
@@ -235,6 +248,93 @@ export const createSupplier = async (data) => {
 
 export const updatePharmacySettings = async (data) => {
   const response = await api.put('/admin/settings', data);
+  return response.data;
+};
+
+// Promotions & Voucher Codes (MySQL-backed)
+export const getPromotions = async () => {
+  const response = await api.get('/promotions');
+  return response.data;
+};
+
+export const validatePromotion = async (code, order_amount) => {
+  const response = await api.post('/promotions/validate', { code, order_amount });
+  return response.data;
+};
+
+// Customer Reviews & Feedback (MySQL-backed)
+export const getReviews = async () => {
+  const response = await api.get('/reviews');
+  return response.data;
+};
+
+export const submitReview = async (reviewData) => {
+  const response = await api.post('/reviews', reviewData);
+  return response.data;
+};
+
+export const voteReviewHelpful = async (reviewId) => {
+  const response = await api.patch(`/reviews/${reviewId}/helpful`);
+  return response.data;
+};
+
+// Customer Contact Inquiries (MySQL-backed)
+export const submitInquiry = async (inquiryData) => {
+  const response = await api.post('/inquiries', inquiryData);
+  return response.data;
+};
+
+export const getInquiryStatus = async (refCode) => {
+  const response = await api.get(`/inquiries/${refCode}`);
+  return response.data;
+};
+
+// Admin Inquiries Management
+export const getAdminInquiries = async (status) => {
+  const response = await api.get('/admin/inquiries', { params: { status } });
+  return response.data;
+};
+
+export const updateAdminInquiryStatus = async (id, data) => {
+  const response = await api.patch(`/admin/inquiries/${id}/status`, data);
+  return response.data;
+};
+
+export const respondToAdminInquiry = async (id, data) => {
+  const response = await api.post(`/admin/inquiries/${id}/respond`, data);
+  return response.data;
+};
+
+export const deleteAdminInquiry = async (id) => {
+  const response = await api.delete(`/admin/inquiries/${id}`);
+  return response.data;
+};
+
+// ============================================================
+// Customer / Patient Portal API Methods (MySQL & JWT-backed)
+// ============================================================
+export const getCustomerProfile = async () => {
+  const response = await api.get('/customers/profile');
+  return response.data;
+};
+
+export const updateCustomerProfile = async (profileData) => {
+  const response = await api.put('/customers/profile', profileData);
+  return response.data;
+};
+
+export const getCustomerPrescriptions = async () => {
+  const response = await api.get('/customers/prescriptions');
+  return response.data;
+};
+
+export const getCustomerInquiries = async () => {
+  const response = await api.get('/customers/inquiries');
+  return response.data;
+};
+
+export const getCustomerOrders = async () => {
+  const response = await api.get('/customers/orders');
   return response.data;
 };
 

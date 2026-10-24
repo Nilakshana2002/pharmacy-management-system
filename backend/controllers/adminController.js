@@ -1,157 +1,20 @@
 import pool from '../config/db.js';
 import bcrypt from 'bcryptjs';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { ensureCustomersTable } from './customerController.js';
 
 /**
  * GET /api/admin/dashboard
  * Aggregated Inventory & Operational Metrics
  */
-let salesTablesChecked = false;
-
 /**
- * Ensures sales, sale_items, sale_item_batches, payments, stock_movements, and audit_logs tables exist
+ * Sales, items, batches, payments, stock movements, promotions, reviews, and logs 
+ * are all fully managed via database/schema.sql and seed.sql
  */
 export const ensureSalesTables = async () => {
-  if (salesTablesChecked) return;
-  try {
-    // 1. Ensure sales table
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS sales (
-        sale_id INT AUTO_INCREMENT PRIMARY KEY,
-        invoice_number VARCHAR(60) NOT NULL UNIQUE,
-        user_id INT NULL,
-        patient_name VARCHAR(150) NOT NULL DEFAULT 'Walk-in Customer',
-        prescription_ref VARCHAR(100) NOT NULL DEFAULT 'OTC',
-        subtotal DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
-        discount_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
-        tax_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
-        total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
-        payment_status ENUM('PAID', 'PARTIAL', 'REFUNDED') NOT NULL DEFAULT 'PAID',
-        sale_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_sales_date (sale_date),
-        INDEX idx_sales_invoice (invoice_number)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    // 2. Ensure sale_items table
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS sale_items (
-        sale_item_id INT AUTO_INCREMENT PRIMARY KEY,
-        sale_id INT NOT NULL,
-        medicine_id INT NOT NULL,
-        quantity INT NOT NULL,
-        unit_price DECIMAL(10, 2) NOT NULL,
-        subtotal DECIMAL(10, 2) NOT NULL,
-        packaging_desc VARCHAR(100) DEFAULT '1 Unit',
-        INDEX idx_sale_items_sale (sale_id),
-        INDEX idx_sale_items_medicine (medicine_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    // 3. Ensure sale_item_batches table
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS sale_item_batches (
-        allocation_id INT AUTO_INCREMENT PRIMARY KEY,
-        sale_item_id INT NOT NULL,
-        batch_id INT NOT NULL,
-        quantity_allocated INT NOT NULL,
-        INDEX idx_alloc_sale_item (sale_item_id),
-        INDEX idx_alloc_batch (batch_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    // 4. Ensure payments table
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS payments (
-        payment_id INT AUTO_INCREMENT PRIMARY KEY,
-        sale_id INT NOT NULL,
-        payment_method ENUM('CASH', 'CARD', 'ONLINE', 'INSURANCE') NOT NULL DEFAULT 'CASH',
-        amount_paid DECIMAL(10, 2) NOT NULL,
-        change_given DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
-        reference_note VARCHAR(150),
-        payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_payments_sale (sale_id),
-        INDEX idx_payments_method (payment_method)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    // 5. Ensure stock_movements table
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS stock_movements (
-        movement_id INT AUTO_INCREMENT PRIMARY KEY,
-        batch_id INT NOT NULL,
-        movement_type ENUM('RESTOCK', 'DISPENSED', 'ADJUSTMENT', 'RECALL', 'EXPIRED_DISCARD') NOT NULL,
-        quantity_changed INT NOT NULL,
-        reason VARCHAR(255),
-        performed_by VARCHAR(100) DEFAULT 'System',
-        movement_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_movements_batch (batch_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    // 6. Ensure audit_logs table
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS audit_logs (
-        log_id INT AUTO_INCREMENT PRIMARY KEY,
-        table_name VARCHAR(50) NOT NULL,
-        operation ENUM('INSERT', 'UPDATE', 'DELETE') NOT NULL,
-        record_id INT NOT NULL,
-        old_value JSON,
-        new_value JSON,
-        performed_by VARCHAR(100) DEFAULT 'System Trigger',
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_audit_table (table_name),
-        INDEX idx_audit_time (timestamp)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    // 7. Check if sales table has records; if empty, seed baseline historical sales
-    const [salesCount] = await pool.query('SELECT COUNT(*) AS cnt FROM sales');
-    if (salesCount[0].cnt === 0) {
-      console.log('[Admin Service] Seeding initial sales transactions for reports & analytics...');
-      await pool.query(`
-        INSERT INTO sales (sale_id, invoice_number, user_id, patient_name, prescription_ref, subtotal, discount_amount, tax_amount, total_amount, payment_status, sale_date) VALUES
-        (1, 'INV-2026-1001', NULL, 'Mrs. Champa Wickramasinghe', 'RX-SLMC-4921', 1850.00, 0.00, 0.00, 1850.00, 'PAID', DATE_SUB(NOW(), INTERVAL 3 DAY)),
-        (2, 'INV-2026-1002', NULL, 'Mr. Roshan De Silva', 'OTC-Walk-in', 150.00, 0.00, 0.00, 150.00, 'PAID', DATE_SUB(NOW(), INTERVAL 2 DAY)),
-        (3, 'INV-2026-1003', NULL, 'Dr. Samantha Perera', 'RX-SLMC-8812', 3450.00, 0.00, 0.00, 3450.00, 'PAID', DATE_SUB(NOW(), INTERVAL 1 DAY)),
-        (4, 'INV-2026-1004', NULL, 'Mr. Nuwan Jayasuriya', 'RX-SLMC-1204', 1280.00, 0.00, 0.00, 1280.00, 'PAID', NOW()),
-        (5, 'INV-2026-1005', NULL, 'Walk-in Customer', 'OTC-Walk-in', 420.00, 0.00, 0.00, 420.00, 'PAID', NOW())
-        ON DUPLICATE KEY UPDATE sale_id = VALUES(sale_id);
-      `);
-
-      const [medRows] = await pool.query('SELECT medicine_id FROM medicines LIMIT 2');
-      const med1 = medRows[0]?.medicine_id || 1;
-      const med2 = medRows[1]?.medicine_id || med1;
-
-      await pool.query(`
-        INSERT IGNORE INTO sale_items (sale_item_id, sale_id, medicine_id, quantity, unit_price, subtotal, packaging_desc) VALUES
-        (1, 1, ?, 10, 185.00, 1850.00, '1 Card (10 Tablets)'),
-        (2, 2, ?, 20, 7.50, 150.00, '2 Cards (20 Tablets)'),
-        (3, 3, ?, 2, 1250.00, 2500.00, '2 Canisters (Inhalers)'),
-        (4, 3, ?, 10, 7.50, 75.00, '1 Card (10 Tablets)'),
-        (5, 3, ?, 4, 185.00, 740.00, '4 Loose Tablets'),
-        (6, 4, ?, 20, 64.00, 1280.00, '2 Cards (20 Tablets)'),
-        (7, 5, ?, 10, 42.00, 420.00, '1 Card (10 Capsules)');
-      `, [med1, med2, med1, med2, med1, med2, med1]);
-
-      await pool.query(`
-        INSERT IGNORE INTO payments (payment_id, sale_id, payment_method, amount_paid, change_given, reference_note, payment_date) VALUES
-        (1, 1, 'CASH', 2000.00, 150.00, 'Counter POS Cash Receipt #INV-2026-1001', DATE_SUB(NOW(), INTERVAL 3 DAY)),
-        (2, 2, 'CASH', 200.00, 50.00, 'Counter POS Cash Receipt #INV-2026-1002', DATE_SUB(NOW(), INTERVAL 2 DAY)),
-        (3, 3, 'CARD', 3450.00, 0.00, 'POS Visa Auth #984210 #INV-2026-1003', DATE_SUB(NOW(), INTERVAL 1 DAY)),
-        (4, 4, 'CARD', 1280.00, 0.00, 'POS Master Auth #441920 #INV-2026-1004', NOW()),
-        (5, 5, 'CASH', 500.00, 80.00, 'Counter POS Cash Receipt #INV-2026-1005', NOW());
-      `);
-    }
-
-    // Auto-sync any orphaned POS transactions from previous migrations or fallback executions
-    await syncOrphanedPosMovements();
-
-    salesTablesChecked = true;
-    console.log('[Admin Service] Sales & reporting database tables verified and operational.');
-  } catch (err) {
-    console.warn('[Admin Service Table Check Notice]:', err.message);
-  }
+  return true;
 };
 
 /**
@@ -257,8 +120,7 @@ export const syncOrphanedPosMovements = async () => {
   }
 };
 
-// Initialize on module load
-ensureSalesTables();
+// ensureSalesTables is awaited on demand inside controller actions to prevent race conditions during boot
 
 /**
  * GET /api/admin/dashboard
@@ -287,6 +149,10 @@ export const getDashboardStats = async (req, res) => {
           WHERE b.medicine_id = m.medicine_id AND b.status = 'active' AND b.expiry_date > CURDATE()
         ) = 0 AND m.is_active = TRUE) AS out_of_stock_medicines,
         (SELECT COUNT(*) FROM medicine_batches WHERE stock_quantity > 0 AND expiry_date <= DATE_ADD(CURDATE(), INTERVAL 90 DAY) AND status = 'active') AS expiring_batches_count,
+        (SELECT COUNT(*) FROM customers WHERE is_active = TRUE) AS total_customers,
+        (SELECT COUNT(*) FROM prescription_orders WHERE status = 'pending') AS pending_prescriptions,
+        (SELECT COUNT(*) FROM inquiries WHERE status = 'NEW') AS new_inquiries,
+        (SELECT COUNT(*) FROM promotions WHERE is_active = TRUE) AS active_promotions,
         -- Financial & Transactional Analytics
         (SELECT COUNT(*) FROM sales WHERE DATE(sale_date) = CURDATE() AND (payment_status = 'PAID' OR payment_status = 'paid' OR payment_status = 'COMPLETED' OR payment_status IS NULL OR payment_status = '')) AS today_sales_count,
         (SELECT COALESCE(SUM(total_amount), 0.00) FROM sales WHERE DATE(sale_date) = CURDATE() AND (payment_status = 'PAID' OR payment_status = 'paid' OR payment_status = 'COMPLETED' OR payment_status IS NULL OR payment_status = '')) AS today_revenue,
@@ -322,7 +188,21 @@ export const getAdminMedicines = async (req, res) => {
         m.generic_name,
         m.dosage_form,
         m.strength,
+        m.description,
+        m.side_effects,
+        m.usage_instructions,
         m.unit_price,
+        m.unit_price AS original_price,
+        CASE 
+          WHEN m.is_offer = TRUE AND m.discount_percent > 0 
+          THEN ROUND(m.unit_price * (1.00 - (m.discount_percent / 100.00)), 2)
+          ELSE m.unit_price 
+        END AS final_price,
+        CASE 
+          WHEN m.is_offer = TRUE AND m.discount_percent > 0 
+          THEN ROUND(m.unit_price * (m.discount_percent / 100.00), 2)
+          ELSE 0.00 
+        END AS discount_amount,
         m.is_public_price,
         m.low_stock_threshold,
         m.is_active,
@@ -367,7 +247,7 @@ export const getAdminMedicines = async (req, res) => {
 
 /**
  * POST /api/admin/medicines
- * Create a new medicine
+ * Create a new medicine formulation
  */
 export const createMedicine = async (req, res) => {
   try {
@@ -383,7 +263,8 @@ export const createMedicine = async (req, res) => {
       usage_instructions,
       unit_price,
       is_public_price = true,
-      low_stock_threshold = 20
+      low_stock_threshold = 20,
+      image_url = null
     } = req.body;
 
     if (!name || !generic_name || !brand_id || !category_id || !dosage_form || !strength) {
@@ -397,9 +278,14 @@ export const createMedicine = async (req, res) => {
       INSERT INTO medicines (
         name, generic_name, brand_id, category_id, dosage_form, 
         strength, description, side_effects, usage_instructions, 
-        unit_price, is_public_price, low_stock_threshold, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)
+        unit_price, is_public_price, low_stock_threshold, is_active,
+        image_url
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?)
     `;
+
+    const cleanImageUrl = image_url && typeof image_url === 'string' && image_url.trim().length > 0 
+      ? image_url.trim() 
+      : null;
 
     const [result] = await pool.query(sql, [
       name.trim(),
@@ -413,19 +299,21 @@ export const createMedicine = async (req, res) => {
       usage_instructions || null,
       parseFloat(unit_price) || 0.0,
       Boolean(is_public_price),
-      parseInt(low_stock_threshold, 10) || 20
+      parseInt(low_stock_threshold, 10) || 20,
+      cleanImageUrl
     ]);
 
     res.status(201).json({
       success: true,
-      message: 'Medicine successfully created.',
-      medicine_id: result.insertId
+      message: 'Medicine formulation successfully created.',
+      medicine_id: result.insertId,
+      image_url: cleanImageUrl
     });
   } catch (error) {
     console.error('[Create Medicine Error]:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to create medicine.',
+      message: 'Failed to create medicine formulation.',
       error: error.message
     });
   }
@@ -433,7 +321,7 @@ export const createMedicine = async (req, res) => {
 
 /**
  * PUT /api/admin/medicines/:id
- * Update an existing medicine
+ * Update an existing medicine formulation
  */
 export const updateMedicine = async (req, res) => {
   try {
@@ -453,7 +341,8 @@ export const updateMedicine = async (req, res) => {
       low_stock_threshold,
       is_active,
       is_offer,
-      discount_percent
+      discount_percent,
+      image_url
     } = req.body;
 
     const sql = `
@@ -472,9 +361,14 @@ export const updateMedicine = async (req, res) => {
         low_stock_threshold = COALESCE(?, low_stock_threshold),
         is_active = COALESCE(?, is_active),
         is_offer = COALESCE(?, is_offer),
-        discount_percent = COALESCE(?, discount_percent)
+        discount_percent = COALESCE(?, discount_percent),
+        image_url = CASE WHEN ? IS NOT NULL THEN ? ELSE image_url END
       WHERE medicine_id = ?
     `;
+
+    const sanitizedImageUrl = image_url !== undefined 
+      ? (typeof image_url === 'string' && image_url.trim().length > 0 ? image_url.trim() : null)
+      : null;
 
     const [result] = await pool.query(sql, [
       name ? name.trim() : null,
@@ -492,25 +386,168 @@ export const updateMedicine = async (req, res) => {
       is_active !== undefined ? Boolean(is_active) : null,
       is_offer !== undefined ? (Boolean(is_offer) ? 1 : 0) : null,
       discount_percent !== undefined ? parseFloat(discount_percent) : null,
+      image_url !== undefined ? 'SET_IMAGE' : null,
+      sanitizedImageUrl,
       medicineId
     ]);
 
     if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
-        message: 'Medicine not found.'
+        message: 'Medicine formulation not found.'
       });
     }
 
     res.status(200).json({
       success: true,
-      message: 'Medicine successfully updated.'
+      message: 'Medicine formulation successfully updated.',
+      image_url: sanitizedImageUrl
     });
   } catch (error) {
     console.error('[Update Medicine Error]:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to update medicine record.',
+      message: 'Failed to update medicine formulation.',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * POST /api/admin/medicines/upload-image
+ * Dedicated file upload endpoint for medicine packaging photography
+ * Stores image in /uploads/medicines and mirrors to /public/medicines
+ */
+export const uploadMedicineImage = async (req, res) => {
+  try {
+    const { imageBase64, fileName = 'medicine_pack.jpg' } = req.body;
+    if (!imageBase64) {
+      return res.status(400).json({
+        success: false,
+        message: 'No image data provided for upload.'
+      });
+    }
+
+    // Extract base64 payload and determine file extension
+    let fileData = imageBase64;
+    let extension = '.jpg';
+    const match = imageBase64.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
+    if (match) {
+      const rawExt = match[1].toLowerCase();
+      extension = rawExt === 'jpeg' ? '.jpg' : `.${rawExt}`;
+      fileData = match[2];
+    } else if (fileName && fileName.includes('.')) {
+      extension = path.extname(fileName).toLowerCase() || '.jpg';
+    }
+
+    const buffer = Buffer.from(fileData, 'base64');
+    if (buffer.length > 10 * 1024 * 1024) {
+      return res.status(400).json({
+        success: false,
+        message: 'Image size exceeds maximum limit of 10MB.'
+      });
+    }
+
+    // Generate sanitized unique filename
+    const cleanRawName = path.basename(fileName, path.extname(fileName))
+      .replace(/[^a-zA-Z0-9_\-\s]/g, '')
+      .trim()
+      .replace(/\s+/g, '_') || 'med';
+    const safeFileName = `${cleanRawName}_${Date.now()}${extension}`;
+
+    // 1. Save to backend /uploads/medicines/
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const backendUploadDir = path.resolve(__dirname, '../uploads/medicines');
+    if (!fs.existsSync(backendUploadDir)) {
+      fs.mkdirSync(backendUploadDir, { recursive: true });
+    }
+    const backendFilePath = path.join(backendUploadDir, safeFileName);
+    fs.writeFileSync(backendFilePath, buffer);
+
+    // 2. Also mirror to frontend/public/medicines/ if folder exists (ensures instant offline availability)
+    try {
+      const frontendMedicinesDir = path.resolve(__dirname, '../../frontend/public/medicines');
+      if (fs.existsSync(frontendMedicinesDir)) {
+        const frontendFilePath = path.join(frontendMedicinesDir, safeFileName);
+        fs.writeFileSync(frontendFilePath, buffer);
+      }
+    } catch (mirrorErr) {
+      console.warn('[Image Mirror Notice]:', mirrorErr.message);
+    }
+
+    const publicUrl = `/uploads/medicines/${safeFileName}`;
+    res.status(200).json({
+      success: true,
+      message: 'Medicine photo uploaded successfully.',
+      image_url: publicUrl,
+      fileName: safeFileName
+    });
+  } catch (error) {
+    console.error('[Upload Medicine Image Error]:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process and save medicine image.',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * GET /api/admin/medicines/library-images
+ * Returns pre-existing and uploaded medicine packaging images
+ */
+export const getMedicineLibraryImages = async (req, res) => {
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const frontendMedicinesDir = path.resolve(__dirname, '../../frontend/public/medicines');
+    const backendUploadDir = path.resolve(__dirname, '../uploads/medicines');
+
+    const imageMap = new Map();
+
+    // 1. Scan frontend public medicines
+    if (fs.existsSync(frontendMedicinesDir)) {
+      const files = fs.readdirSync(frontendMedicinesDir);
+      for (const file of files) {
+        const ext = path.extname(file).toLowerCase();
+        if (['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) {
+          imageMap.set(file, {
+            name: file.replace(ext, ''),
+            fileName: file,
+            url: `/medicines/${encodeURIComponent(file)}`
+          });
+        }
+      }
+    }
+
+    // 2. Scan backend uploads
+    if (fs.existsSync(backendUploadDir)) {
+      const files = fs.readdirSync(backendUploadDir);
+      for (const file of files) {
+        const ext = path.extname(file).toLowerCase();
+        if (['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) {
+          imageMap.set(file, {
+            name: file.replace(ext, ''),
+            fileName: file,
+            url: `/uploads/medicines/${encodeURIComponent(file)}`
+          });
+        }
+      }
+    }
+
+    const images = Array.from(imageMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+    res.status(200).json({
+      success: true,
+      count: images.length,
+      data: images
+    });
+  } catch (error) {
+    console.error('[Library Images Error]:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve image library.',
       error: error.message
     });
   }
@@ -1132,25 +1169,103 @@ export const getExpiringBatchesReport = async (req, res) => {
  * GET /api/admin/audit-logs
  * Optional query: startDate, endDate
  */
+let auditRoutinesEnsured = false;
+async function ensureAuditRoutines() {
+  if (auditRoutinesEnsured) return;
+  try {
+    // Create or Replace ADBMS View: v_enriched_audit_feed
+    await pool.query(`
+      CREATE OR REPLACE VIEW v_enriched_audit_feed AS
+      SELECT 
+          a.log_id,
+          a.timestamp,
+          a.table_name,
+          a.operation,
+          a.record_id,
+          CASE 
+              WHEN a.table_name = 'medicine_batches' THEN 
+                  COALESCE(CONCAT(m.name, ' (Lot #', b.batch_number, ')'), CONCAT('Batch #', a.record_id))
+              WHEN a.table_name = 'medicines' THEN 
+                  COALESCE(m_direct.name, CONCAT('Medicine #', a.record_id))
+              ELSE CONCAT(a.table_name, ' #', a.record_id)
+          END AS target_name,
+          CAST(a.old_value->>'$.stock_quantity' AS SIGNED) AS old_stock,
+          CAST(a.new_value->>'$.stock_quantity' AS SIGNED) AS new_stock,
+          (CAST(a.new_value->>'$.stock_quantity' AS SIGNED) - CAST(a.old_value->>'$.stock_quantity' AS SIGNED)) AS stock_diff,
+          a.old_value->>'$.status' AS old_status,
+          a.new_value->>'$.status' AS new_status,
+          COALESCE(
+            CASE 
+              WHEN a.table_name = 'medicine_batches' AND a.operation = 'UPDATE' AND (a.old_value->>'$.stock_quantity' != a.new_value->>'$.stock_quantity')
+              THEN CONCAT('Stock changed: ', a.old_value->>'$.stock_quantity', ' → ', a.new_value->>'$.stock_quantity')
+              WHEN a.table_name = 'medicine_batches' AND a.operation = 'UPDATE' AND (a.old_value->>'$.status' != a.new_value->>'$.status')
+              THEN CONCAT('Status changed: ', a.old_value->>'$.status', ' → ', a.new_value->>'$.status')
+              ELSE CONCAT(a.operation, ' on ', a.table_name)
+            END,
+            CONCAT(a.operation, ' on ', a.table_name)
+          ) AS action_summary,
+          a.performed_by,
+          a.old_value,
+          a.new_value
+      FROM audit_logs a
+      LEFT JOIN medicine_batches b ON a.table_name = 'medicine_batches' AND a.record_id = b.batch_id
+      LEFT JOIN medicines m ON b.medicine_id = m.medicine_id
+      LEFT JOIN medicines m_direct ON a.table_name = 'medicines' AND a.record_id = m_direct.medicine_id
+    `);
+    auditRoutinesEnsured = true;
+  } catch (vErr) {
+    console.warn('[Audit View Setup Notice]:', vErr.message);
+  }
+}
+
+/**
+ * GET /api/admin/audit-logs
+ * Retrieves enriched audit activity trail via ADBMS view v_enriched_audit_feed
+ */
 export const getAuditLogs = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
-    let whereClauses = [];
-    let params = [];
+    const { module: mod, operation, startDate, endDate, limit } = req.query;
+    await ensureAuditRoutines();
 
-    if (startDate) {
-      whereClauses.push('timestamp >= ?');
-      params.push(`${startDate} 00:00:00`);
+    let rows = [];
+    try {
+      let whereClauses = [];
+      let params = [];
+
+      if (mod && mod !== 'ALL') {
+        whereClauses.push('table_name = ?');
+        params.push(mod);
+      }
+      if (operation && operation !== 'ALL') {
+        whereClauses.push('operation = ?');
+        params.push(operation);
+      }
+      if (startDate) {
+        whereClauses.push('timestamp >= ?');
+        params.push(`${startDate} 00:00:00`);
+      }
+      if (endDate) {
+        whereClauses.push('timestamp <= ?');
+        params.push(`${endDate} 23:59:59`);
+      }
+
+      const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+      const limitNum = parseInt(limit, 10) || 200;
+      params.push(limitNum);
+
+      const [viewRows] = await pool.query(
+        `SELECT * FROM v_enriched_audit_feed ${whereSql} ORDER BY timestamp DESC LIMIT ?`,
+        params
+      );
+      rows = viewRows;
+    } catch (viewError) {
+      // Safe fallback directly from audit_logs
+      const [rawRows] = await pool.query(
+        'SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 200'
+      );
+      rows = rawRows;
     }
-    if (endDate) {
-      whereClauses.push('timestamp <= ?');
-      params.push(`${endDate} 23:59:59`);
-    }
 
-    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-    const sql = `SELECT * FROM audit_logs ${whereSql} ORDER BY timestamp DESC LIMIT 200`;
-
-    const [rows] = await pool.query(sql, params);
     res.status(200).json({
       success: true,
       count: rows.length,
@@ -1195,6 +1310,7 @@ export const createSale = async (req, res) => {
   const {
     patient_name = 'Walk-in Customer',
     prescription_ref = 'OTC',
+    customer_id = null,
     medicine_id,
     batch_id,
     quantity,
@@ -1236,22 +1352,86 @@ export const createSale = async (req, res) => {
 
   await ensureSalesTables();
 
+  // 1. Resolve user_id and customer_id existence
+  let validUserId = null;
+  if (rawUserId) {
+    try {
+      const [uRows] = await pool.query('SELECT user_id FROM users WHERE user_id = ? LIMIT 1', [rawUserId]);
+      if (uRows.length > 0) validUserId = rawUserId;
+    } catch (uErr) {
+      validUserId = null;
+    }
+  }
+
+  let validCustomerId = null;
+  if (customer_id) {
+    try {
+      const [cRows] = await pool.query('SELECT customer_id FROM customers WHERE customer_id = ? LIMIT 1', [parseInt(customer_id, 10)]);
+      if (cRows.length > 0) validCustomerId = cRows[0].customer_id;
+    } catch (cErr) {
+      validCustomerId = null;
+    }
+  }
+
+  const changeGiven = Math.max(0, parseFloat((numericPaid - totalBill).toFixed(2)));
+
+  // 2. PRIMARY ARCHITECTURAL PATH: Execute MySQL Stored Procedure sp_create_pos_sale
+  // Guarantees ACID concurrency control, row-level pessimistic locking (FOR UPDATE)
+  let procedureSucceeded = false;
+  let saleId = null;
+  let invoiceNumber = null;
+
+  try {
+    await pool.query(
+      'CALL sp_create_pos_sale(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, @out_sale_id, @out_inv_no)',
+      [
+        validUserId,
+        validCustomerId,
+        (patient_name || 'Walk-in Customer').trim(),
+        (prescription_ref || 'OTC').trim(),
+        parseInt(medicine_id, 10),
+        parseInt(batch_id, 10),
+        numericQty,
+        effectivePrice,
+        packaging_desc || '1 Unit',
+        (payment_method || 'CASH').toUpperCase(),
+        numericPaid,
+        performer
+      ]
+    );
+
+    const [outRows] = await pool.query('SELECT @out_sale_id AS sale_id, @out_inv_no AS invoice_number');
+    if (outRows && outRows.length > 0 && outRows[0].sale_id) {
+      saleId = outRows[0].sale_id;
+      invoiceNumber = outRows[0].invoice_number;
+      procedureSucceeded = true;
+      console.log(`[ADBMS Stored Procedure Success]: CALL sp_create_pos_sale executed -> Sale #${saleId}, Invoice #${invoiceNumber} (Patient: ${patient_name}, Customer FK: ${validCustomerId})`);
+    }
+  } catch (spErr) {
+    console.warn('[ADBMS Stored Procedure Notice]: sp_create_pos_sale execution warning, checking fallback:', spErr.message);
+  }
+
+  if (procedureSucceeded) {
+    return res.status(201).json({
+      success: true,
+      message: 'Prescription sale successfully finalized via Stored Procedure sp_create_pos_sale.',
+      data: {
+        sale_id: saleId,
+        invoice_number: invoiceNumber,
+        customer_id: validCustomerId,
+        total_amount: totalBill,
+        amount_paid: numericPaid,
+        change_given: changeGiven,
+        timestamp: new Date().toISOString()
+      }
+    });
+  }
+
+  // 3. FALLBACK PATH: Transactional Query Execution with Pessimistic Locking
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
 
-    // 1. Verify user_id existence to prevent foreign key errors
-    let validUserId = null;
-    if (rawUserId) {
-      try {
-        const [uRows] = await connection.query('SELECT user_id FROM users WHERE user_id = ? LIMIT 1', [rawUserId]);
-        if (uRows.length > 0) validUserId = rawUserId;
-      } catch (uErr) {
-        validUserId = null;
-      }
-    }
-
-    // 2. Lock and verify batch row FOR UPDATE (Note: unit_price belongs to medicines, not medicine_batches)
     const [batchRows] = await connection.query(
       'SELECT batch_id, medicine_id, batch_number, stock_quantity, status, expiry_date FROM medicine_batches WHERE batch_id = ? FOR UPDATE',
       [parseInt(batch_id, 10)]
@@ -1266,29 +1446,27 @@ export const createSale = async (req, res) => {
       throw new Error(`Insufficient batch stock. Available: ${batch.stock_quantity} units, Requested: ${numericQty} units.`);
     }
 
-    // 3. Generate unique human-readable invoice number
     const dateSegment = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const randSegment = Math.floor(10000 + Math.random() * 90000);
-    const invoiceNumber = `INV-${dateSegment}-${randSegment}`;
+    invoiceNumber = `INV-${dateSegment}-${randSegment}`;
 
-    // 4. Insert into sales
     const [saleRes] = await connection.query(`
       INSERT INTO sales (
-        invoice_number, user_id, patient_name, prescription_ref,
+        invoice_number, user_id, customer_id, patient_name, prescription_ref,
         subtotal, discount_amount, tax_amount, total_amount, payment_status, sale_date
       ) VALUES (?, ?, ?, ?, ?, 0.00, 0.00, ?, 'PAID', CURRENT_TIMESTAMP)
     `, [
       invoiceNumber,
       validUserId,
+      validCustomerId,
       (patient_name || 'Walk-in Customer').trim(),
       (prescription_ref || 'OTC').trim(),
       totalBill,
       totalBill
     ]);
 
-    const saleId = saleRes.insertId;
+    saleId = saleRes.insertId;
 
-    // 5. Insert into sale_items
     const [itemRes] = await connection.query(`
       INSERT INTO sale_items (sale_id, medicine_id, quantity, unit_price, subtotal, packaging_desc)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -1301,18 +1479,13 @@ export const createSale = async (req, res) => {
       packaging_desc || '1 Unit'
     ]);
 
-    // 6. Insert into sale_item_batches (3NF traceability bridge)
     try {
       await connection.query(`
         INSERT INTO sale_item_batches (sale_item_id, batch_id, quantity_allocated)
         VALUES (?, ?, ?)
       `, [itemRes.insertId, parseInt(batch_id, 10), numericQty]);
-    } catch (allocErr) {
-      // Non-fatal if table index varies
-    }
+    } catch (allocErr) {}
 
-    // 7. Insert into payments
-    const changeGiven = Math.max(0, parseFloat((numericPaid - totalBill).toFixed(2)));
     await connection.query(`
       INSERT INTO payments (sale_id, payment_method, amount_paid, change_given, reference_note, payment_date)
       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -1324,7 +1497,6 @@ export const createSale = async (req, res) => {
       `Counter POS Receipt #${invoiceNumber}`
     ]);
 
-    // 8. Deduct batch physical inventory
     const newStock = batch.stock_quantity - numericQty;
     const newStatus = newStock === 0 ? 'depleted' : batch.status;
     await connection.query(
@@ -1332,7 +1504,6 @@ export const createSale = async (req, res) => {
       [newStock, newStatus, parseInt(batch_id, 10)]
     );
 
-    // 9. Record physical stock movement
     await connection.query(`
       INSERT INTO stock_movements (batch_id, movement_type, quantity_changed, reason, performed_by, movement_date)
       VALUES (?, 'DISPENSED', ?, ?, ?, CURRENT_TIMESTAMP)
@@ -1343,29 +1514,7 @@ export const createSale = async (req, res) => {
       performer
     ]);
 
-    // 10. Record immutable audit log
-    try {
-      await connection.query(`
-        INSERT INTO audit_logs (table_name, operation, record_id, old_value, new_value, performed_by, timestamp)
-        VALUES ('sales', 'INSERT', ?, NULL, ?, ?, CURRENT_TIMESTAMP)
-      `, [
-        saleId,
-        JSON.stringify({
-          invoice_number: invoiceNumber,
-          total_amount: totalBill,
-          medicine_id: parseInt(medicine_id, 10),
-          batch_id: parseInt(batch_id, 10),
-          quantity: numericQty
-        }),
-        performer
-      ]);
-    } catch (auditErr) {
-      // Non-fatal
-    }
-
     await connection.commit();
-
-    console.log(`[POS Sale Committed]: Invoice #${invoiceNumber} for Rs. ${totalBill.toFixed(2)} (${performer})`);
 
     res.status(201).json({
       success: true,
@@ -1373,6 +1522,7 @@ export const createSale = async (req, res) => {
       data: {
         sale_id: saleId,
         invoice_number: invoiceNumber,
+        customer_id: validCustomerId,
         total_amount: totalBill,
         amount_paid: numericPaid,
         change_given: changeGiven,
@@ -1419,8 +1569,10 @@ export const getSalesHistory = async (req, res) => {
       SELECT 
         s.sale_id,
         s.invoice_number,
+        s.customer_id,
         s.patient_name,
-        s.patient_name AS customer_name,
+        COALESCE(c.full_name, s.patient_name) AS customer_name,
+        c.email AS customer_email,
         s.prescription_ref,
         s.total_amount,
         s.payment_status,
@@ -1442,6 +1594,7 @@ export const getSalesHistory = async (req, res) => {
         ) AS item_count
       FROM sales s
       LEFT JOIN users u ON s.user_id = u.user_id
+      LEFT JOIN customers c ON s.customer_id = c.customer_id
       LEFT JOIN (
         SELECT sale_id, MAX(payment_method) AS payment_method, SUM(amount_paid) AS amount_paid
         FROM payments
@@ -1521,8 +1674,11 @@ export const getSaleById = async (req, res) => {
       SELECT 
         s.sale_id,
         s.invoice_number,
+        s.customer_id,
         s.patient_name,
-        s.patient_name AS customer_name,
+        COALESCE(c.full_name, s.patient_name) AS customer_name,
+        c.email AS customer_email,
+        c.phone AS customer_phone,
         s.prescription_ref,
         s.subtotal,
         s.discount_amount,
@@ -1538,6 +1694,7 @@ export const getSaleById = async (req, res) => {
         p.reference_note
       FROM sales s
       LEFT JOIN users u ON s.user_id = u.user_id
+      LEFT JOIN customers c ON s.customer_id = c.customer_id
       LEFT JOIN payments p ON s.sale_id = p.sale_id
       WHERE s.sale_id = ? OR s.invoice_number = ?
       LIMIT 1
@@ -1802,17 +1959,10 @@ export const getInventoryValuationReport = async (req, res) => {
 };
 
 /**
- * Helper to ensure permissions column exists safely without throwing
+ * Permissions column in users table is managed via database/schema.sql
  */
-let permissionsColumnChecked = false;
 async function ensurePermissionsColumn() {
-  if (permissionsColumnChecked) return;
-  try {
-    await pool.query('ALTER TABLE users ADD COLUMN permissions TEXT NULL');
-  } catch (e) {
-    // Column already exists or table structure error
-  }
-  permissionsColumnChecked = true;
+  return true;
 }
 
 /**
@@ -1857,7 +2007,8 @@ export const getUsers = async (req, res) => {
             can_manage_batches: true,
             can_view_reports: true,
             can_view_audit: true,
-            can_manage_users: true
+            can_manage_users: true,
+            can_manage_inquiries: true
           };
         } else {
           perms = {
@@ -1865,6 +2016,7 @@ export const getUsers = async (req, res) => {
             can_manage_medicines: true,
             can_manage_batches: true,
             can_view_reports: false,
+            can_manage_inquiries: false,
             can_view_audit: false,
             can_manage_users: false
           };
@@ -1916,7 +2068,8 @@ export const createUser = async (req, res) => {
       can_manage_batches: assignedRole === 'ADMIN',
       can_view_reports: assignedRole === 'ADMIN',
       can_view_audit: assignedRole === 'ADMIN',
-      can_manage_users: assignedRole === 'ADMIN'
+      can_manage_users: assignedRole === 'ADMIN',
+      can_manage_inquiries: assignedRole === 'ADMIN'
     });
 
     let result;
@@ -2425,5 +2578,329 @@ export const deleteCustomer = async (req, res) => {
     });
   }
 };
+
+/**
+ * GET /api/admin/inquiries
+ * List customer contact messages & inquiries
+ */
+export const getInquiries = async (req, res) => {
+  try {
+    await ensureSalesTables();
+    const { status } = req.query;
+    let sql = `
+      SELECT 
+        i.inquiry_id,
+        i.reference_code,
+        i.customer_id,
+        i.name,
+        i.phone,
+        i.email,
+        i.medicine_query,
+        i.message,
+        i.status,
+        i.staff_notes,
+        i.responded_by,
+        i.responded_at,
+        i.created_at,
+        c.full_name AS registered_patient_name
+      FROM inquiries i
+      LEFT JOIN customers c ON i.customer_id = c.customer_id
+    `;
+    const params = [];
+    if (status) {
+      sql += ' WHERE i.status = ?';
+      params.push(status);
+    }
+    sql += ' ORDER BY i.created_at DESC LIMIT 100';
+
+    const [rows] = await pool.query(sql, params);
+    res.status(200).json({
+      success: true,
+      count: rows.length,
+      data: rows
+    });
+  } catch (error) {
+    console.error('[Admin Inquiries Error]:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve customer inquiries.',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * PATCH /api/admin/inquiries/:id/status
+ * Update status of customer inquiry and staff notes
+ */
+export const updateInquiryStatus = async (req, res) => {
+  try {
+    await ensureSalesTables();
+    const inquiryId = parseInt(req.params.id, 10);
+    const { status, staff_notes } = req.body;
+    const staffName = req.user ? req.user.fullName : 'Admin Pharmacist';
+
+    if (req.user && req.user.role !== 'ADMIN' && req.user.permissions && req.user.permissions.can_manage_inquiries === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Inquiry Analyst edit privileges required to update inquiry status.'
+      });
+    }
+
+    if (!['NEW', 'IN_REVIEW', 'RESOLVED'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid status. Permitted values: NEW, IN_REVIEW, RESOLVED'
+      });
+    }
+
+    const [result] = await pool.query(`
+      UPDATE inquiries SET
+        status = ?,
+        staff_notes = COALESCE(?, staff_notes),
+        responded_by = ?,
+        responded_at = CURRENT_TIMESTAMP
+      WHERE inquiry_id = ?
+    `, [status, staff_notes || null, staffName, inquiryId]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Inquiry record not found.' });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Inquiry status updated to ${status}.`
+    });
+  } catch (error) {
+    console.error('[Admin Update Inquiry Status Error]:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update inquiry status.',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * POST /api/admin/inquiries/:id/respond
+ * Send an email response to customer inquiry and update inquiry status + audit log
+ */
+export const respondToInquiry = async (req, res) => {
+  try {
+    await ensureSalesTables();
+    const inquiryId = parseInt(req.params.id, 10);
+    const { response_message, subject, status = 'RESOLVED' } = req.body;
+    const staffName = req.user ? req.user.fullName : 'Registered Pharmacist';
+
+    if (req.user && req.user.role !== 'ADMIN' && req.user.permissions && req.user.permissions.can_manage_inquiries === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Inquiry Analyst edit privileges required to respond to customer inquiries.'
+      });
+    }
+
+    if (!response_message || !response_message.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Response message is mandatory.'
+      });
+    }
+
+    const [inquiries] = await pool.query(`
+      SELECT 
+        i.inquiry_id,
+        i.reference_code,
+        i.customer_id,
+        i.name,
+        i.phone,
+        i.email,
+        i.medicine_query,
+        i.message,
+        i.status
+      FROM inquiries i
+      WHERE i.inquiry_id = ?
+      LIMIT 1
+    `, [inquiryId]);
+
+    if (inquiries.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry record not found.'
+      });
+    }
+
+    const inquiry = inquiries[0];
+    const emailSubject = (subject && subject.trim()) 
+      ? subject.trim() 
+      : `Response to Inquiry [${inquiry.reference_code}] - My Pharmacist Dispensary`;
+
+    // 1. Update the database record with the response
+    await pool.query(`
+      UPDATE inquiries SET
+        status = ?,
+        staff_notes = ?,
+        responded_by = ?,
+        responded_at = CURRENT_TIMESTAMP
+      WHERE inquiry_id = ?
+    `, [status, response_message.trim(), staffName, inquiryId]);
+
+    let emailSent = false;
+    let emailError = null;
+
+    // 2. If customer provided email, dispatch response email via SMTP
+    if (inquiry.email && inquiry.email.includes('@')) {
+      try {
+        const { sendSmtpMail } = await import('../services/smtpClient.js');
+
+        const htmlContent = `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 620px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; color: #1e293b;">
+            <div style="border-bottom: 2px solid #0d9488; padding-bottom: 16px; margin-bottom: 20px;">
+              <h2 style="margin: 0; color: #0f766e; font-size: 20px; font-weight: 800;">My Pharmacist Dispensary</h2>
+              <p style="margin: 4px 0 0 0; color: #64748b; font-size: 13px;">Clinical Healthcare & Patient Consultation</p>
+            </div>
+
+            <p style="font-size: 15px; line-height: 1.5;">Dear <strong>${inquiry.name}</strong>,</p>
+            <p style="font-size: 14px; line-height: 1.6; color: #334155;">
+              Thank you for contacting My Pharmacist Dispensary regarding <em>"${inquiry.medicine_query || 'General Consultation'}"</em> (Reference: <span style="font-family: monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${inquiry.reference_code}</span>).
+            </p>
+
+            <div style="background-color: #f8fafc; border-left: 4px solid #94a3b8; border-radius: 6px; padding: 14px; margin: 18px 0;">
+              <p style="margin: 0; font-size: 12px; font-weight: bold; color: #475569; text-transform: uppercase; letter-spacing: 0.5px;">Your Original Inquiry:</p>
+              <p style="margin: 8px 0 0 0; font-size: 13px; color: #64748b; line-height: 1.5; font-style: italic;">"${inquiry.message}"</p>
+            </div>
+
+            <div style="background-color: #f0fdfa; border: 1px solid #ccfbf1; border-left: 4px solid #0d9488; border-radius: 6px; padding: 16px; margin: 20px 0;">
+              <p style="margin: 0; font-size: 12px; font-weight: bold; color: #0f766e; text-transform: uppercase; letter-spacing: 0.5px;">Dispensary Clinical Response:</p>
+              <p style="margin: 10px 0 0 0; font-size: 14px; color: #0f172a; line-height: 1.6; white-space: pre-line;">${response_message.trim()}</p>
+            </div>
+
+            <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #64748b;">
+              <p style="margin: 0;"><strong>Responded By:</strong> ${staffName}</p>
+              <p style="margin: 4px 0 0 0;"><strong>Response Date:</strong> ${new Date().toLocaleString()}</p>
+              <p style="margin: 12px 0 0 0; color: #94a3b8; font-size: 11px;">If you have further questions or need immediate prescription fulfillment, please visit our physical dispensary counter or reply to this email.</p>
+            </div>
+          </div>
+        `;
+
+        const plainText = `Dear ${inquiry.name},\n\n` +
+          `Thank you for contacting My Pharmacist Dispensary (Reference: ${inquiry.reference_code}).\n\n` +
+          `Your Inquiry:\n"${inquiry.message}"\n\n` +
+          `Clinical Response:\n${response_message.trim()}\n\n` +
+          `Responded By: ${staffName}\n` +
+          `Date: ${new Date().toLocaleString()}\n\n` +
+          `My Pharmacist Healthcare Team`;
+
+        await sendSmtpMail({
+          to: inquiry.email,
+          subject: emailSubject,
+          html: htmlContent,
+          text: plainText
+        });
+
+        emailSent = true;
+
+        try {
+          await pool.query(`
+            INSERT INTO notification_logs (
+              customer_id, recipient_email, recipient_name, subject, message_body, notification_type, status, sent_at
+            ) VALUES (?, ?, ?, ?, ?, 'INQUIRY_RESPONSE', 'SENT', CURRENT_TIMESTAMP)
+          `, [
+            inquiry.customer_id || null,
+            inquiry.email.trim(),
+            inquiry.name.trim(),
+            emailSubject,
+            plainText
+          ]);
+        } catch (logErr) {
+          console.warn('[Notification Log Warning]:', logErr.message);
+        }
+
+      } catch (err) {
+        console.error('[Inquiry SMTP Send Error]:', err);
+        emailError = err.message;
+
+        try {
+          await pool.query(`
+            INSERT INTO notification_logs (
+              customer_id, recipient_email, recipient_name, subject, message_body, notification_type, status, sent_at
+            ) VALUES (?, ?, ?, ?, ?, 'INQUIRY_RESPONSE', 'FAILED', CURRENT_TIMESTAMP)
+          `, [
+            inquiry.customer_id || null,
+            inquiry.email.trim(),
+            inquiry.name.trim(),
+            emailSubject,
+            `Failed to dispatch: ${err.message}`
+          ]);
+        } catch (e) {}
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: emailSent
+        ? `Response successfully sent to ${inquiry.email} and marked as ${status}.`
+        : inquiry.email
+          ? `Response saved to database. Email dispatch notice: ${emailError || 'Failed to connect to email provider'}.`
+          : `Response saved to database (no customer email was provided).`,
+      email_sent: emailSent,
+      email_error: emailError,
+      data: {
+        inquiry_id: inquiryId,
+        status,
+        staff_notes: response_message.trim(),
+        responded_by: staffName,
+        responded_at: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('[Admin Respond to Inquiry Error]:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process inquiry response.',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * DELETE /api/admin/inquiries/:id
+ * Permanently remove customer contact inquiry
+ */
+export const deleteInquiry = async (req, res) => {
+  try {
+    await ensureSalesTables();
+    const inquiryId = parseInt(req.params.id, 10);
+
+    if (req.user && req.user.role !== 'ADMIN' && req.user.permissions && req.user.permissions.can_manage_inquiries === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Inquiry Analyst edit privileges required to delete inquiries.'
+      });
+    }
+
+    const [result] = await pool.query('DELETE FROM inquiries WHERE inquiry_id = ?', [inquiryId]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry record not found.'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Customer inquiry deleted successfully.'
+    });
+  } catch (error) {
+    console.error('[Admin Delete Inquiry Error]:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete customer inquiry.',
+      error: error.message
+    });
+  }
+};
+
 
 

@@ -6,9 +6,34 @@ export async function initializeDatabaseCatalog() {
   try {
     console.log('[DB Migration] Checking database schema for discounts, offers, and ratings...');
 
-    // 0. Ensure safe filename for La Roche-Posay image (avoid '+' decoding issues in Vite/Express)
+    // 0. Ensure safe filenames for all static medicine images (eliminates '%' and '+' decoding crashes in Vite)
     try {
       const publicMedsDir = path.resolve('../frontend/public/medicines');
+      
+      const copySafe = (srcName, destName) => {
+        const srcPath = path.join(publicMedsDir, srcName);
+        const destPath = path.join(publicMedsDir, destName);
+        if (fs.existsSync(srcPath) && !fs.existsSync(destPath)) {
+          fs.copyFileSync(srcPath, destPath);
+          console.log(`[Image Sync] Created safe static asset: ${destName}`);
+        }
+      };
+
+      // Fucidin Cream (removes '%' which breaks Vite decodeURI)
+      copySafe('Fucidin Cream 2%.jpg', 'Fucidin Cream 2.jpg');
+      copySafe('Fucidin Cream 2%.jpg', 'Fucidin Cream.jpg');
+
+      // Optimum Nutrition Whey (removes '%' which breaks Vite decodeURI)
+      copySafe('Optimum Nutrition Gold Standard 100% Whey (2 lbs).jpg', 'Optimum Nutrition Gold Standard 100 Whey (2 lbs).jpg');
+      copySafe('Optimum Nutrition Gold Standard 100% Whey (2 lbs).jpg', 'Optimum Nutrition Gold Standard 100% Whey 2 lbs.jpg');
+      copySafe('Optimum Nutrition Gold Standard 100% Whey (2 lbs).jpg', 'Optimum Nutrition Gold Standard 100 Whey 2 lbs.jpg');
+
+      // Parentheses variations for seed data compatibility
+      copySafe('Certified 3-Ply Protective Face Masks (Box of 50).jpg', 'Certified 3-Ply Protective Face Masks Box of 50.jpg');
+      copySafe('Accu-Chek Active Blood Glucose Test Strips (50 Strips).jpg', 'Accu-Chek Active Blood Glucose Test Strips 50 Strips.jpg');
+      copySafe('Wellman 50+ Comprehensive Multivitamin & Minerals (30 Tablets).jpg', 'Wellman 50+ Comprehensive Multivitamin & Minerals 30 Tablets.jpg');
+
+      // La Roche-Posay Anthelios
       const safeDest = path.join(publicMedsDir, 'La Roche-Posay Anthelios UVMune 400 Invisible Fluid SPF 50.jpg');
       const plusSrc = path.join(publicMedsDir, 'La Roche-Posay Anthelios UVMune 400 Invisible Fluid SPF 50+.jpg');
       const userUploaded = 'C:/Users/tharu/.gemini/antigravity-ide/brain/99b7bd6a-0406-413c-b99e-52d689e3db94/.user_uploaded/media_1792599895438.jpg';
@@ -19,6 +44,12 @@ export async function initializeDatabaseCatalog() {
       } else if (fs.existsSync(plusSrc) && !fs.existsSync(safeDest)) {
         fs.copyFileSync(plusSrc, safeDest);
         console.log('[Image Sync] Copied plus-sign La Roche-Posay photo to safe filename:', safeDest);
+      }
+
+      // Clean up rogue exe file if present in public folder
+      const rogueExe = path.join(publicMedsDir, 'GrammarlyOnlineSetup.cGcOwk90blmub5nnjc8n0c02.loc-en-US.exe');
+      if (fs.existsSync(rogueExe)) {
+        try { fs.unlinkSync(rogueExe); } catch (e) {}
       }
     } catch (fsErr) {
       console.warn('[Image Sync Warning]:', fsErr.message);
@@ -45,35 +76,130 @@ export async function initializeDatabaseCatalog() {
 
     if (!colNames.includes('image_url')) {
       console.log('[DB Migration] Adding image_url column to medicines...');
-      await pool.query('ALTER TABLE medicines ADD COLUMN image_url VARCHAR(255) NULL');
+      await pool.query('ALTER TABLE medicines ADD COLUMN image_url TEXT NULL');
+    } else {
+      try {
+        await pool.query('ALTER TABLE medicines MODIFY COLUMN image_url TEXT NULL');
+      } catch (modErr) {}
     }
 
-    // 2. Ensure Categories exist
+    // 1.1 Ensure image_url and parent_category_id columns exist in medicine_categories
+    try {
+      const [catCols] = await pool.query('SHOW COLUMNS FROM medicine_categories');
+      const catColFields = catCols.map(c => c.Field);
+      if (!catColFields.includes('image_url')) {
+        console.log('[DB Migration] Adding image_url column to medicine_categories...');
+        await pool.query('ALTER TABLE medicine_categories ADD COLUMN image_url VARCHAR(500) NULL');
+      }
+      if (!catColFields.includes('parent_category_id')) {
+        console.log('[DB Migration] Adding parent_category_id column to medicine_categories...');
+        await pool.query('ALTER TABLE medicine_categories ADD COLUMN parent_category_id INT NULL');
+      }
+    } catch (catColErr) {
+      console.warn('[Category columns Migration Notice]:', catColErr.message);
+    }
+
+    // 2. Ensure Categories exist with specific medical and wellness images
     const categoriesToAdd = [
-      { name: 'Antibiotics & Antimicrobials', desc: 'Medicines that fight bacterial infections.', icon: 'ShieldAlert' },
-      { name: 'Analgesics & Pain Relief', desc: 'Medications designed to relieve acute and chronic pain.', icon: 'Activity' },
-      { name: 'Cardiovascular & Blood Pressure', desc: 'Medications for hypertension, cholesterol, angina, and heart health.', icon: 'Heart' },
-      { name: 'Respiratory & Allergy', desc: 'Inhalers, antihistamines, and bronchodilators for asthma and breathing conditions.', icon: 'Wind' },
-      { name: 'Gastrointestinal & Antacids', desc: 'Remedies for acid reflux, ulcers, digestion, nausea, and gut flora.', icon: 'Stomach' },
-      { name: 'Endocrine & Antidiabetic', desc: 'Insulin therapies and oral medications for blood glucose regulation.', icon: 'Zap' },
-      { name: 'Vitamins & Dietary Supplements', desc: 'Essential micronutrients, immune support supplements, and mineral formulations.', icon: 'Sun' },
-      { name: 'Dermatology & Skin Care', desc: 'Topical ointments, corticosteroids, and antibacterial creams.', icon: 'Sparkles' },
-      { name: 'Diet & Nutrition', desc: 'Protein powders, dietary food supplements, weight management, and energy formulations.', icon: 'Apple' },
-      { name: 'Beauty Care & Cosmetics', desc: 'Dermatological skincare, cleansers, serums, sunscreens, and medical cosmetics.', icon: 'Sparkles' },
-      { name: 'Personal Care & Hygiene', desc: 'Everyday hygiene essentials, adult care, antiseptic washes, and personal wellness.', icon: 'Shield' },
-      { name: 'Baby & Mother Care', desc: 'Pediatric care, baby lotion, gentle baby baths, hypoallergenic wipes, and baby nutrition.', icon: 'Heart' },
-      { name: 'Medical Devices & Equipment', desc: 'Blood pressure monitors, diagnostic stethoscopes, nebulizers, thermometers, and glucometers.', icon: 'Activity' },
-      { name: 'Ayurvedic & Herbal Care', desc: 'Natural herbal remedies, herbal eye drops, gastro teas, and certified herbal wellness.', icon: 'Leaf' }
+      { 
+        name: 'Antibiotics & Antimicrobials', 
+        desc: 'Medicines that fight bacterial infections.', 
+        icon: 'ShieldAlert',
+        image_url: 'https://images.unsplash.com/photo-1471864190281-a93a3070b6de?auto=format&fit=crop&w=600&q=80'
+      },
+      { 
+        name: 'Analgesics & Pain Relief', 
+        desc: 'Medications designed to relieve acute and chronic pain.', 
+        icon: 'Activity',
+        image_url: 'https://images.unsplash.com/photo-1584017911766-d451b3d0e843?auto=format&fit=crop&w=600&q=80'
+      },
+      { 
+        name: 'Cardiovascular & Blood Pressure', 
+        desc: 'Medications for hypertension, cholesterol, angina, and heart health.', 
+        icon: 'Heart',
+        image_url: 'https://images.unsplash.com/photo-1505751172876-fa1923c5c528?auto=format&fit=crop&w=600&q=80'
+      },
+      { 
+        name: 'Respiratory & Allergy', 
+        desc: 'Inhalers, antihistamines, and bronchodilators for asthma and breathing conditions.', 
+        icon: 'Wind',
+        image_url: 'https://images.unsplash.com/photo-1584362917165-526a968579e8?auto=format&fit=crop&w=600&q=80'
+      },
+      { 
+        name: 'Gastrointestinal & Antacids', 
+        desc: 'Remedies for acid reflux, ulcers, digestion, nausea, and gut flora.', 
+        icon: 'Stomach',
+        image_url: 'https://images.unsplash.com/photo-1550572017-edd951aa8f72?auto=format&fit=crop&w=600&q=80'
+      },
+      { 
+        name: 'Endocrine & Antidiabetic', 
+        desc: 'Insulin therapies and oral medications for blood glucose regulation.', 
+        icon: 'Zap',
+        image_url: 'https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=600&q=80'
+      },
+      { 
+        name: 'Vitamins & Dietary Supplements', 
+        desc: 'Essential micronutrients, immune support supplements, and mineral formulations.', 
+        icon: 'Sun',
+        image_url: 'https://images.unsplash.com/photo-1577401239170-897942555fb3?auto=format&fit=crop&w=600&q=80'
+      },
+      { 
+        name: 'Dermatology & Skin Care', 
+        desc: 'Topical ointments, corticosteroids, and antibacterial creams.', 
+        icon: 'Sparkles',
+        image_url: 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=600&q=80'
+      },
+      { 
+        name: 'Diet & Nutrition', 
+        desc: 'Protein powders, dietary food supplements, weight management, and energy formulations.', 
+        icon: 'Apple',
+        image_url: 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=600&q=80'
+      },
+      { 
+        name: 'Beauty Care & Cosmetics', 
+        desc: 'Dermatological skincare, cleansers, serums, sunscreens, and medical cosmetics.', 
+        icon: 'Sparkles',
+        image_url: 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=600&q=80'
+      },
+      { 
+        name: 'Personal Care & Hygiene', 
+        desc: 'Everyday hygiene essentials, adult care, antiseptic washes, and personal wellness.', 
+        icon: 'Shield',
+        image_url: 'https://images.unsplash.com/photo-1583947215259-38e31be8751f?auto=format&fit=crop&w=600&q=80'
+      },
+      { 
+        name: 'Baby & Mother Care', 
+        desc: 'Pediatric care, baby lotion, gentle baby baths, hypoallergenic wipes, and baby nutrition.', 
+        icon: 'Heart',
+        image_url: 'https://images.unsplash.com/photo-1519689680058-324335c77eba?auto=format&fit=crop&w=600&q=80'
+      },
+      { 
+        name: 'Medical Devices & Equipment', 
+        desc: 'Blood pressure monitors, diagnostic stethoscopes, nebulizers, thermometers, and glucometers.', 
+        icon: 'Activity',
+        image_url: 'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=600&q=80'
+      },
+      { 
+        name: 'Ayurvedic & Herbal Care', 
+        desc: 'Natural herbal remedies, herbal eye drops, gastro teas, and certified herbal wellness.', 
+        icon: 'Leaf',
+        image_url: 'https://images.unsplash.com/photo-1617791160505-6f00504e3519?auto=format&fit=crop&w=600&q=80'
+      }
     ];
 
     for (const cat of categoriesToAdd) {
-      const [existing] = await pool.query('SELECT category_id FROM medicine_categories WHERE category_name = ?', [cat.name]);
+      const [existing] = await pool.query('SELECT category_id, image_url FROM medicine_categories WHERE category_name = ?', [cat.name]);
       if (existing.length === 0) {
         await pool.query(
-          'INSERT INTO medicine_categories (category_name, description, icon_name) VALUES (?, ?, ?)',
-          [cat.name, cat.desc, cat.icon]
+          'INSERT INTO medicine_categories (category_name, description, icon_name, image_url) VALUES (?, ?, ?, ?)',
+          [cat.name, cat.desc, cat.icon, cat.image_url]
         );
-        console.log(`[DB Migration] Created Category: ${cat.name}`);
+        console.log(`[DB Migration] Created Category with Image: ${cat.name}`);
+      } else if (!existing[0].image_url || existing[0].image_url !== cat.image_url) {
+        await pool.query(
+          'UPDATE medicine_categories SET image_url = ?, description = ?, icon_name = ? WHERE category_id = ?',
+          [cat.image_url, cat.desc, cat.icon, existing[0].category_id]
+        );
       }
     }
 
@@ -389,10 +515,10 @@ export async function initializeDatabaseCatalog() {
         `, [p.discount_percent, p.is_offer ? 1 : 0, p.rating, medicineId]);
       }
 
-      // Check if active batch exists
+      // Check if batch already exists by batch_number
       const [existingBatches] = await pool.query(
-        'SELECT batch_id FROM medicine_batches WHERE medicine_id = ? AND status = "active"',
-        [medicineId]
+        'SELECT batch_id FROM medicine_batches WHERE batch_number = ?',
+        [p.batch_number]
       );
 
       if (existingBatches.length === 0) {
@@ -402,8 +528,19 @@ export async function initializeDatabaseCatalog() {
             expiry_date, quantity_received, stock_quantity, reserved_quantity,
             unit_cost, status
           ) VALUES (?, ?, ?, '2025-01-10', '2027-12-31', ?, ?, 0, ?, 'active')
+          ON DUPLICATE KEY UPDATE
+            medicine_id = VALUES(medicine_id),
+            stock_quantity = VALUES(stock_quantity),
+            unit_cost = VALUES(unit_cost),
+            status = 'active'
         `, [medicineId, supplierId, p.batch_number, p.stock_qty, p.stock_qty, p.unit_cost]);
         console.log(`[DB Migration] Added Active Batch for Medicine #${medicineId} (${p.stock_qty} units)`);
+      } else {
+        await pool.query(`
+          UPDATE medicine_batches 
+          SET medicine_id = ?, supplier_id = ?, stock_quantity = ?, unit_cost = ?, status = 'active'
+          WHERE batch_number = ?
+        `, [medicineId, supplierId, p.stock_qty, p.unit_cost, p.batch_number]);
       }
 
       // Update image_url if provided or if La Roche-Posay
@@ -415,12 +552,17 @@ export async function initializeDatabaseCatalog() {
       }
     }
 
-    // Direct guarantee update for La Roche-Posay product photo URL in database
-    await pool.query(`
-      UPDATE medicines 
-      SET image_url = '/medicines/La Roche-Posay Anthelios UVMune 400 Invisible Fluid SPF 50.jpg'
-      WHERE name LIKE '%Roche%' OR name LIKE '%Anthelios%'
-    `);
+    // Direct guarantee updates for all medicines image_urls to safe filenames without '%' or '+'
+    try {
+      await pool.query(`UPDATE medicines SET image_url = '/medicines/Fucidin Cream 2.jpg' WHERE name LIKE '%Fucidin%'`);
+      await pool.query(`UPDATE medicines SET image_url = '/medicines/Optimum Nutrition Gold Standard 100 Whey (2 lbs).jpg' WHERE name LIKE '%Optimum Nutrition%' OR name LIKE '%Whey%'`);
+      await pool.query(`UPDATE medicines SET image_url = '/medicines/La Roche-Posay Anthelios UVMune 400 Invisible Fluid SPF 50.jpg' WHERE name LIKE '%Roche%' OR name LIKE '%Anthelios%'`);
+      await pool.query(`UPDATE medicines SET image_url = '/medicines/Certified 3-Ply Protective Face Masks (Box of 50).jpg' WHERE name LIKE '%Face Masks%'`);
+      await pool.query(`UPDATE medicines SET image_url = '/medicines/Accu-Chek Active Blood Glucose Test Strips (50 Strips).jpg' WHERE name LIKE '%Accu-Chek%'`);
+      await pool.query(`UPDATE medicines SET image_url = '/medicines/Wellman 50+ Comprehensive Multivitamin & Minerals (30 Tablets).jpg' WHERE name LIKE '%Wellman%'`);
+      await pool.query(`UPDATE medicines SET image_url = '/medicines/Omron Ultrasonic Mesh Nebulizer MicroAir NE-U100.jpg' WHERE name LIKE '%Nebulizer%' OR name LIKE '%NE-U100%'`);
+      await pool.query(`UPDATE medicines SET image_url = '/medicines/Siddhalepa Herbal Balm 50g Original Ayur Formula.jpg' WHERE name LIKE '%Siddhalepa%'`);
+    } catch (dbImgErr) {}
 
     console.log('[DB Migration] All wellness products successfully persisted to MySQL Database.');
     return { success: true };

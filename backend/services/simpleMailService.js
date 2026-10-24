@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import pool from '../config/db.js';
 import { sendSmtpMail, verifySmtpConnection, getSmtpConfig } from './smtpClient.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -19,9 +20,34 @@ const ensureDataDir = () => {
 };
 
 /**
- * Saves or updates sent email in outbox file
+ * Saves or updates sent email in relational notification_logs table and outbox mirror
  */
-const saveToOutbox = (emailRecord) => {
+const saveToOutbox = async (emailRecord) => {
+  // 1. Enterprise Relational Database Logging (notification_logs table)
+  try {
+    const notifType = emailRecord.type || 'SYSTEM';
+    const statusVal = emailRecord.status === 'FAILED' ? 'FAILED' : 'SENT';
+    await pool.query(`
+      INSERT INTO notification_logs (
+        order_id, customer_id, recipient_email, recipient_name,
+        subject, message_body, notification_type, status, error_message, sent_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `, [
+      emailRecord.order_id || null,
+      emailRecord.customer_id || null,
+      emailRecord.to || 'unknown@recipient.com',
+      emailRecord.recipientName || emailRecord.customerName || null,
+      emailRecord.subject || 'Dispensary Notification',
+      emailRecord.text || emailRecord.preview || '',
+      notifType,
+      statusVal,
+      emailRecord.error || null
+    ]);
+  } catch (dbErr) {
+    console.warn('[Mail Service DB Logging Notice]:', dbErr.message);
+  }
+
+  // 2. Local Disk Outbox File Mirror
   try {
     ensureDataDir();
     let records = [];
@@ -39,9 +65,35 @@ const saveToOutbox = (emailRecord) => {
 };
 
 /**
- * Reads outbox emails
+ * Reads outbox emails prioritizing MySQL notification_logs table with fallback to JSON
  */
-export const getMailOutbox = () => {
+export const getMailOutbox = async () => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT 
+        notification_id,
+        notification_id AS id,
+        order_id,
+        customer_id,
+        recipient_email AS \`to\`,
+        recipient_name AS recipientName,
+        subject,
+        message_body AS text,
+        notification_type AS type,
+        status,
+        sent_at,
+        created_at
+      FROM notification_logs
+      ORDER BY sent_at DESC
+      LIMIT 100
+    `);
+    if (rows && rows.length > 0) {
+      return rows;
+    }
+  } catch (dbErr) {
+    console.warn('[Mail Service Outbox Query Notice]:', dbErr.message);
+  }
+
   try {
     ensureDataDir();
     if (!fs.existsSync(OUTBOX_FILE)) return [];

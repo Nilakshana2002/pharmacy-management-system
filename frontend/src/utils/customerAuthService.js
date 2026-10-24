@@ -88,6 +88,8 @@ export async function loginCustomer({ email, password }) {
     });
     const data = await response.json();
     if (response.ok && data.success) {
+      localStorage.removeItem('vdc_staff_token');
+      localStorage.removeItem('vdc_staff_user');
       localStorage.setItem(STORAGE_KEY_CURRENT, JSON.stringify(data.customer));
       if (data.token) localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
       notifyCustomerAuthChanged(data.customer);
@@ -123,6 +125,8 @@ export async function loginCustomer({ email, password }) {
     role: 'CUSTOMER'
   };
 
+  localStorage.removeItem('vdc_staff_token');
+  localStorage.removeItem('vdc_staff_user');
   localStorage.setItem(STORAGE_KEY_CURRENT, JSON.stringify(safeCustomer));
   notifyCustomerAuthChanged(safeCustomer);
   return { success: true, customer: safeCustomer, message: 'Welcome back! Signed in successfully.' };
@@ -158,6 +162,8 @@ export async function registerCustomer({ fullName, email, password, contactNo, p
     });
     const data = await response.json();
     if (response.ok && data.success) {
+      localStorage.removeItem('vdc_staff_token');
+      localStorage.removeItem('vdc_staff_user');
       localStorage.setItem(STORAGE_KEY_CURRENT, JSON.stringify(data.customer));
       if (data.token) localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
 
@@ -187,7 +193,7 @@ export async function registerCustomer({ fullName, email, password, contactNo, p
   }
 
   const newCustomer = {
-    customer_id: Date.now(),
+    customer_id: Math.floor(100000 + Math.random() * 899999),
     full_name: trimmedFullName,
     email: trimmedEmail,
     password: trimmedPassword,
@@ -213,6 +219,8 @@ export async function registerCustomer({ fullName, email, password, contactNo, p
     role: 'CUSTOMER'
   };
 
+  localStorage.removeItem('vdc_staff_token');
+  localStorage.removeItem('vdc_staff_user');
   localStorage.setItem(STORAGE_KEY_CURRENT, JSON.stringify(safeCustomer));
   notifyCustomerAuthChanged(safeCustomer);
   return { 

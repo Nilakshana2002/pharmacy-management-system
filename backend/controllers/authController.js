@@ -132,7 +132,8 @@ export const login = async (req, res) => {
           can_manage_batches: true,
           can_view_reports: true,
           can_view_audit: true,
-          can_manage_users: true
+          can_manage_users: true,
+          can_manage_inquiries: true
         };
       } else {
         userPermissions = {
@@ -140,6 +141,7 @@ export const login = async (req, res) => {
           can_manage_medicines: true,
           can_manage_batches: true,
           can_view_reports: true,
+          can_manage_inquiries: true,
           can_view_audit: false,
           can_manage_users: false
         };

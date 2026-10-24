@@ -10,58 +10,11 @@ import {
 } from '../services/simpleMailService.js';
 
 /**
- * Ensures prescription_orders table exists in MySQL database
+ * Prescription orders and prescription_files tables are managed via database/schema.sql
  */
 export const ensurePrescriptionOrdersTable = async () => {
-  try {
-    const createSql = `
-      CREATE TABLE IF NOT EXISTS prescription_orders (
-        order_id VARCHAR(50) PRIMARY KEY,
-        account_type ENUM('registered', 'guest') NOT NULL DEFAULT 'guest',
-        customer_id INT NULL,
-        your_name VARCHAR(150) NOT NULL,
-        your_email VARCHAR(150) NOT NULL,
-        patient_name VARCHAR(150) NULL,
-        patient_age VARCHAR(50) NULL,
-        contact_no VARCHAR(50) NULL,
-        delivery_option VARCHAR(100) DEFAULT 'Dispensary Counter Pickup (Free)',
-        files LONGTEXT,
-        message TEXT,
-        status ENUM('pending', 'accepted', 'rejected', 'dispensed') NOT NULL DEFAULT 'pending',
-        pharmacist_name VARCHAR(150) NULL,
-        reviewed_at DATETIME NULL,
-        confirmation_message TEXT NULL,
-        rejection_reason TEXT NULL,
-        ready_time VARCHAR(100) NULL,
-        email_sent TINYINT(1) DEFAULT 0,
-        email_sent_at DATETIME NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_rx_email (your_email),
-        INDEX idx_rx_status (status),
-        INDEX idx_rx_created (created_at)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `;
-    await pool.query(createSql);
-
-    // Safely upgrade columns if table already existed with older schema
-    try {
-      await pool.query('ALTER TABLE prescription_orders MODIFY COLUMN files LONGTEXT');
-    } catch (e) {
-      // ignore
-    }
-    try {
-      await pool.query('ALTER TABLE prescription_orders MODIFY COLUMN contact_no VARCHAR(50) NULL');
-      await pool.query('ALTER TABLE prescription_orders MODIFY COLUMN patient_name VARCHAR(150) NULL');
-    } catch (e) {
-      // ignore
-    }
-  } catch (err) {
-    console.warn('[Prescription Orders Table Check Notice]:', err.message);
-  }
+  return true;
 };
-
-// Initialize table on load
-ensurePrescriptionOrdersTable();
 
 /**
  * Helper to parse files and pharmacist_review
@@ -155,15 +108,27 @@ export const createPrescriptionOrder = async (req, res) => {
 
     // System identification: Is user registered in the customers database?
     let resolvedAccountType = account_type === 'registered' ? 'registered' : 'guest';
-    let resolvedCustomerId = customer_id ? parseInt(customer_id, 10) : null;
+    let resolvedCustomerId = null;
+
+    // Validate if customer_id is a valid MySQL INT (<= 2,147,483,647) to avoid ER_WARN_DATA_OUT_OF_RANGE
+    const rawCustomerId = customer_id ? parseInt(customer_id, 10) : null;
+    const isValidIntId = rawCustomerId && !isNaN(rawCustomerId) && rawCustomerId > 0 && rawCustomerId <= 2147483647;
 
     try {
-      const [custRows] = await pool.query(`
+      let querySql = `
         SELECT customer_id, full_name, email, contact_no, nic, address, created_at
         FROM customers
-        WHERE LOWER(TRIM(email)) = ? OR customer_id = ?
-        LIMIT 1
-      `, [safeYourEmail, resolvedCustomerId || -1]);
+        WHERE LOWER(TRIM(email)) = ?
+      `;
+      let queryParams = [safeYourEmail];
+
+      if (isValidIntId) {
+        querySql += ` OR customer_id = ?`;
+        queryParams.push(rawCustomerId);
+      }
+      querySql += ` LIMIT 1`;
+
+      const [custRows] = await pool.query(querySql, queryParams);
 
       if (custRows.length > 0) {
         resolvedAccountType = 'registered';
@@ -171,6 +136,7 @@ export const createPrescriptionOrder = async (req, res) => {
       }
     } catch (e) {
       console.warn('[Check Registered Customer Error]:', e.message);
+      resolvedCustomerId = null;
     }
 
     // Generate unique order ID: RX-2026-XXXX or use provided client order ID
@@ -207,6 +173,44 @@ export const createPrescriptionOrder = async (req, res) => {
       filesJson,
       message ? message.trim() : null
     ]);
+
+    // Insert into normalized 3NF child entity: prescription_files
+    if (Array.isArray(files) && files.length > 0) {
+      for (const f of files) {
+        let filePath = null;
+        let fileName = null;
+        let fileType = null;
+        let fileSize = null;
+        let fileData = null;
+
+        if (typeof f === 'string') {
+          if (f.startsWith('data:')) {
+            fileData = f;
+            fileType = f.split(';')[0].replace('data:', '');
+            fileSize = f.length;
+            fileName = 'Prescription_Image';
+          } else {
+            filePath = f;
+            fileName = f.split('/').pop();
+          }
+        } else if (typeof f === 'object' && f !== null) {
+          fileName = f.name || f.fileName || 'Prescription_Document';
+          fileType = f.type || f.fileType || null;
+          fileSize = f.size || f.fileSize || null;
+          filePath = f.path || f.url || f.file_path || null;
+          fileData = f.data || f.fileData || (f.url && f.url.startsWith('data:') ? f.url : null);
+        }
+
+        try {
+          await pool.query(`
+            INSERT INTO prescription_files (order_id, file_path, file_name, file_type, file_size, file_data)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `, [finalOrderId, filePath, fileName, fileType, fileSize, fileData]);
+        } catch (fErr) {
+          console.warn('[Prescription Files Insert Notice]:', fErr.message);
+        }
+      }
+    }
 
     const newOrder = {
       order_id: finalOrderId,
@@ -610,14 +614,15 @@ export const testSmtpStatus = async (req, res) => {
  */
 export const testDispatchEmail = async (req, res) => {
   try {
-    const { toEmail } = req.body;
+    const toEmail = req.body?.toEmail || req.query?.toEmail || process.env.SMTP_USER;
     const result = await sendTestEmail(toEmail);
     res.status(200).json({
       success: true,
-      message: `Test email dispatched successfully.`,
+      message: `Test email dispatched successfully to ${toEmail}.`,
       result
     });
   } catch (error) {
+    console.error('[Test Email Error]:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to dispatch test email.'
