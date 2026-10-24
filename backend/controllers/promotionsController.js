@@ -3,7 +3,7 @@ import pool from '../config/db.js';
 let promotionsTableChecked = false;
 
 /**
- * Ensure promotions table exists with baseline records
+ * Promotions table and seed data are managed strictly in database/schema.sql and database/seed.sql
  */
 export async function ensurePromotionsTable() {
   if (promotionsTableChecked) return;
@@ -43,9 +43,6 @@ export async function ensurePromotionsTable() {
     console.warn('[Ensure Promotions Table Notice]:', err.message);
   }
 }
-
-// Initialize on module load
-ensurePromotionsTable();
 
 /**
  * GET /api/promotions

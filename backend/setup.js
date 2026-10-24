@@ -102,7 +102,8 @@ async function runDatabaseSetup() {
       { table: 'medicines', column: 'discount_percent', definition: 'DECIMAL(5, 2) NOT NULL DEFAULT 0.00' },
       { table: 'medicine_categories', column: 'parent_category_id', definition: 'INT NULL' },
       { table: 'medicine_categories', column: 'icon_name', definition: "VARCHAR(50) DEFAULT 'Pill'" },
-      { table: 'medicine_categories', column: 'image_url', definition: 'VARCHAR(500) NULL' }
+      { table: 'medicine_categories', column: 'image_url', definition: 'VARCHAR(500) NULL' },
+      { table: 'users', column: 'permissions', definition: 'TEXT NULL' }
     ];
 
     for (const col of columnSyncList) {

@@ -11,6 +11,7 @@ import AvailabilityBadge from '../components/AvailabilityBadge';
 import { getMedicines, getCategories, getBrands } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
 import { getMedicineProductImage } from '../utils/pharmacyImages';
+import { getMedicinePricing } from '../utils/medicinePricing';
 
 export default function MedicineSearchPage({ 
   initialQuery = '', 
@@ -253,19 +254,22 @@ export default function MedicineSearchPage({
         if (rxFilter === 'otc' && isRx) return false;
       }
 
-      // 9. Price Range Filter
-      const price = Number(p.unit_price) || 0;
-      if (price < appliedPriceRange[0] || price > appliedPriceRange[1]) {
+      // 9. Price Range Filter (using effective customer price after offers)
+      const pricing = getMedicinePricing(p);
+      const effectivePrice = pricing.finalPrice;
+      if (effectivePrice < appliedPriceRange[0] || effectivePrice > appliedPriceRange[1]) {
         return false;
       }
 
       return true;
     }).sort((a, b) => {
+      const priceA = getMedicinePricing(a).finalPrice;
+      const priceB = getMedicinePricing(b).finalPrice;
       if (sortBy === 'price_asc') {
-        return (Number(a.unit_price) || 0) - (Number(b.unit_price) || 0);
+        return priceA - priceB;
       }
       if (sortBy === 'price_desc') {
-        return (Number(b.unit_price) || 0) - (Number(a.unit_price) || 0);
+        return priceB - priceA;
       }
       if (sortBy === 'name_asc') {
         return (a.name || '').localeCompare(b.name || '');
@@ -810,7 +814,8 @@ export default function MedicineSearchPage({
                 const isPrescription = ['Antibiotics', 'Antibiotics & Antimicrobials', 'Cardiovascular', 'Cardiovascular & Blood Pressure', 'Respiratory', 'Respiratory & Allergy'].includes(med.category_name) || 
                   med.dosage_form?.toLowerCase().includes('injection');
                 const img = getMedicineProductImage(med);
-                const isOffer = med.is_offer || Boolean(med.discount_percent);
+                const pricing = getMedicinePricing(med);
+                const { isOffer, discountPercent, formattedFinalPrice, formattedRegularPrice, formattedDiscountDeduction, discountDeduction } = pricing;
 
                 return (
                   <div 
@@ -826,8 +831,8 @@ export default function MedicineSearchPage({
                           loading="lazy"
                         />
                         {isOffer && (
-                          <span className="absolute top-1 right-1 px-1.5 py-0.2 rounded bg-rose-600 text-white font-black text-[8px] uppercase">
-                            SALE
+                          <span className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-rose-600 text-white font-black text-[8px] uppercase tracking-wider shadow-xs">
+                            -{discountPercent}%
                           </span>
                         )}
                       </div>
@@ -860,19 +865,30 @@ export default function MedicineSearchPage({
 
                     <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-4 shrink-0">
                       <div className="text-left sm:text-right">
-                        {med.is_public_price && med.unit_price ? (
+                        {pricing.isPublic && pricing.regularPrice > 0 ? (
                           <>
-                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Retail Price</span>
-                            <div className="flex items-baseline gap-1 sm:justify-end">
-                              <span className="text-base font-black text-slate-900 dark:text-white">
-                                Rs. {Number(med.unit_price).toFixed(2)}
+                            <span className={`text-[10px] uppercase font-bold block ${
+                              isOffer ? 'text-rose-600 dark:text-rose-400 font-extrabold' : 'text-slate-400'
+                            }`}>
+                              {isOffer ? `Offer Price (-${discountPercent}%)` : 'Retail Price'}
+                            </span>
+                            <div className="flex items-baseline gap-1.5 sm:justify-end flex-wrap">
+                              <span className={`text-base font-black ${
+                                isOffer ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'
+                              }`}>
+                                Rs. {formattedFinalPrice}
                               </span>
-                              {med.original_price && (
+                              {isOffer && (
                                 <span className="text-xs text-slate-400 line-through">
-                                  Rs. {Number(med.original_price).toFixed(2)}
+                                  Rs. {formattedRegularPrice}
                                 </span>
                               )}
                             </div>
+                            {isOffer && discountDeduction > 0 && (
+                              <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 block sm:text-right">
+                                Save Rs. {formattedDiscountDeduction}
+                              </span>
+                            )}
                           </>
                         ) : (
                           <span className="text-xs font-semibold text-slate-500">Inquire at Counter</span>

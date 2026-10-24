@@ -8,6 +8,7 @@ import AboutContactPage from './pages/AboutContactPage';
 import StaffLoginPage from './pages/StaffLoginPage';
 import StaffDashboardPage from './pages/StaffDashboardPage';
 import { useTheme } from './context/ThemeContext';
+import { logoutCustomer } from './utils/customerAuthService';
 
 export default function App() {
   const { isDark } = useTheme();
@@ -16,7 +17,7 @@ export default function App() {
   const [selectedMedicine, setSelectedMedicine] = useState(null);
   const [staffUser, setStaffUser] = useState(null);
 
-  // Restore staff session if token exists
+  // Restore staff session if token exists & listen for session changes
   useEffect(() => {
     const token = localStorage.getItem('vdc_staff_token');
     const userStr = localStorage.getItem('vdc_staff_user');
@@ -28,6 +29,28 @@ export default function App() {
         localStorage.removeItem('vdc_staff_user');
       }
     }
+
+    const handleCustomerAuthChange = (e) => {
+      // If a patient logged in, terminate staff session in memory
+      if (e.detail) {
+        setStaffUser(null);
+      }
+    };
+
+    const handleStaffAuthChange = () => {
+      const uStr = localStorage.getItem('vdc_staff_user');
+      if (!uStr) {
+        setStaffUser(null);
+      }
+    };
+
+    window.addEventListener('pharmacy_customer_auth_change', handleCustomerAuthChange);
+    window.addEventListener('pharmacy_staff_auth_change', handleStaffAuthChange);
+
+    return () => {
+      window.removeEventListener('pharmacy_customer_auth_change', handleCustomerAuthChange);
+      window.removeEventListener('pharmacy_staff_auth_change', handleStaffAuthChange);
+    };
   }, []);
 
   const navigateTo = (page, params = {}) => {
@@ -118,6 +141,7 @@ export default function App() {
         {activePage === 'login' && (
           <StaffLoginPage
             onLoginSuccess={(user) => {
+              logoutCustomer();
               setStaffUser(user);
               setActivePage('dashboard');
             }}
@@ -135,6 +159,7 @@ export default function App() {
           ) : (
             <StaffLoginPage
               onLoginSuccess={(user) => {
+                logoutCustomer();
                 setStaffUser(user);
                 setActivePage('dashboard');
               }}

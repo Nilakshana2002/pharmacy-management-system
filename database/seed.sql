@@ -554,6 +554,13 @@ INSERT INTO prescription_orders (
  'Licensed Staff Pharmacist', NOW(), 'Prescription validated by supervising pharmacist. Please bring your original SLMC doctor prescription for counter stamp verification.',
  NULL, 'Today after 4:00 PM', 1, NOW()),
 
+('RX-2026-8911', 'registered', 1, 'Kasun Perera', 'kasun.perera@gmail.com', 
+ 'Kasun Perera', '38', '+94 77 123 4567', 'Doorstep Courier Delivery (Flat Rs. 350)',
+ 1, 'Antibiotic prescription refill for Amoxicillin capsules.', 'rejected', 
+ 'Supervising Clinical Pharmacist', NOW(), NULL,
+ 'Doctor license seal and date of prescription are illegible or missing. SLMC regulations require an authorized physical seal for scheduled antibiotics.',
+ NULL, 1, NOW()),
+
 ('RX-2026-8908', 'registered', 2, 'Mrs. Champa Wickramasinghe', 'champa.w@gmail.com', 
  'Mrs. Champa Wickramasinghe', '58', '+94 71 987 6543', 'Doorstep Courier Delivery (Flat Rs. 350)',
  1, 'Lipitor and Cozaar prescription uploaded for delivery.', 'pending', 

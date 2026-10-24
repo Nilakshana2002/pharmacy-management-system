@@ -4,7 +4,7 @@ import crypto from 'crypto';
 let inquiriesTableChecked = false;
 
 /**
- * Ensure inquiries and notification_logs tables exist
+ * Inquiries and notification_logs tables are managed via database/schema.sql
  */
 export async function ensureInquiriesTable() {
   if (inquiriesTableChecked) return;
@@ -53,9 +53,6 @@ export async function ensureInquiriesTable() {
   }
 }
 
-// Initialize on module load
-ensureInquiriesTable();
-
 /**
  * POST /api/inquiries
  * Submit customer contact message or medicine inquiry into MySQL database
@@ -87,6 +84,13 @@ export const createInquiry = async (req, res) => {
     if (customer_id) {
       try {
         const [c] = await pool.query('SELECT customer_id FROM customers WHERE customer_id = ? LIMIT 1', [parseInt(customer_id, 10)]);
+        if (c.length > 0) validCustomerId = c[0].customer_id;
+      } catch (e) {}
+    }
+
+    if (!validCustomerId && email) {
+      try {
+        const [c] = await pool.query('SELECT customer_id FROM customers WHERE LOWER(TRIM(email)) = LOWER(TRIM(?)) LIMIT 1', [email.trim()]);
         if (c.length > 0) validCustomerId = c[0].customer_id;
       } catch (e) {}
     }

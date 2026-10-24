@@ -7,6 +7,7 @@ import {
 import { getPublicSettings, submitInquiry } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
 import { PHARMACY_IMAGES } from '../utils/pharmacyImages';
+import { getCurrentCustomer } from '../utils/customerAuthService';
 
 export default function AboutContactPage({ initialFocus = 'about' }) {
   const { isDark } = useTheme();
@@ -18,6 +19,15 @@ export default function AboutContactPage({ initialFocus = 'about' }) {
 
   useEffect(() => {
     loadSettings();
+    const currentCust = getCurrentCustomer();
+    if (currentCust) {
+      setFormData(prev => ({
+        ...prev,
+        name: prev.name || currentCust.full_name || currentCust.name || '',
+        email: prev.email || currentCust.email || '',
+        phone: prev.phone || currentCust.phone || ''
+      }));
+    }
   }, []);
 
   useEffect(() => {
@@ -48,12 +58,14 @@ export default function AboutContactPage({ initialFocus = 'about' }) {
     e.preventDefault();
     setSubmitting(true);
     try {
+      const currentCust = getCurrentCustomer();
       const res = await submitInquiry({
         name: formData.name,
         phone: formData.phone,
         email: formData.email || null,
         medicine_query: formData.medicineQuery,
-        message: formData.message
+        message: formData.message,
+        customer_id: currentCust?.customer_id || null
       });
       if (res.success && res.reference_code) {
         setInquiryRef(res.reference_code);

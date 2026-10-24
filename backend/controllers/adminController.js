@@ -1,15 +1,17 @@
 import pool from '../config/db.js';
 import bcrypt from 'bcryptjs';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { ensureCustomersTable } from './customerController.js';
 
 /**
  * GET /api/admin/dashboard
  * Aggregated Inventory & Operational Metrics
  */
-let salesTablesChecked = false;
-
 /**
- * Ensures sales, sale_items, sale_item_batches, payments, stock_movements, and audit_logs tables exist
+ * Sales, items, batches, payments, stock movements, promotions, reviews, and logs 
+ * are all fully managed via database/schema.sql and seed.sql
  */
 export const ensureSalesTables = async () => {
   if (salesTablesChecked) return;
@@ -418,7 +420,21 @@ export const getAdminMedicines = async (req, res) => {
         m.generic_name,
         m.dosage_form,
         m.strength,
+        m.description,
+        m.side_effects,
+        m.usage_instructions,
         m.unit_price,
+        m.unit_price AS original_price,
+        CASE 
+          WHEN m.is_offer = TRUE AND m.discount_percent > 0 
+          THEN ROUND(m.unit_price * (1.00 - (m.discount_percent / 100.00)), 2)
+          ELSE m.unit_price 
+        END AS final_price,
+        CASE 
+          WHEN m.is_offer = TRUE AND m.discount_percent > 0 
+          THEN ROUND(m.unit_price * (m.discount_percent / 100.00), 2)
+          ELSE 0.00 
+        END AS discount_amount,
         m.is_public_price,
         m.low_stock_threshold,
         m.is_active,
@@ -463,7 +479,7 @@ export const getAdminMedicines = async (req, res) => {
 
 /**
  * POST /api/admin/medicines
- * Create a new medicine
+ * Create a new medicine formulation
  */
 export const createMedicine = async (req, res) => {
   try {
@@ -479,7 +495,8 @@ export const createMedicine = async (req, res) => {
       usage_instructions,
       unit_price,
       is_public_price = true,
-      low_stock_threshold = 20
+      low_stock_threshold = 20,
+      image_url = null
     } = req.body;
 
     if (!name || !generic_name || !brand_id || !category_id || !dosage_form || !strength) {
@@ -493,9 +510,14 @@ export const createMedicine = async (req, res) => {
       INSERT INTO medicines (
         name, generic_name, brand_id, category_id, dosage_form, 
         strength, description, side_effects, usage_instructions, 
-        unit_price, is_public_price, low_stock_threshold, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)
+        unit_price, is_public_price, low_stock_threshold, is_active,
+        image_url
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?)
     `;
+
+    const cleanImageUrl = image_url && typeof image_url === 'string' && image_url.trim().length > 0 
+      ? image_url.trim() 
+      : null;
 
     const [result] = await pool.query(sql, [
       name.trim(),
@@ -509,19 +531,21 @@ export const createMedicine = async (req, res) => {
       usage_instructions || null,
       parseFloat(unit_price) || 0.0,
       Boolean(is_public_price),
-      parseInt(low_stock_threshold, 10) || 20
+      parseInt(low_stock_threshold, 10) || 20,
+      cleanImageUrl
     ]);
 
     res.status(201).json({
       success: true,
-      message: 'Medicine successfully created.',
-      medicine_id: result.insertId
+      message: 'Medicine formulation successfully created.',
+      medicine_id: result.insertId,
+      image_url: cleanImageUrl
     });
   } catch (error) {
     console.error('[Create Medicine Error]:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to create medicine.',
+      message: 'Failed to create medicine formulation.',
       error: error.message
     });
   }
@@ -529,7 +553,7 @@ export const createMedicine = async (req, res) => {
 
 /**
  * PUT /api/admin/medicines/:id
- * Update an existing medicine
+ * Update an existing medicine formulation
  */
 export const updateMedicine = async (req, res) => {
   try {
@@ -549,7 +573,8 @@ export const updateMedicine = async (req, res) => {
       low_stock_threshold,
       is_active,
       is_offer,
-      discount_percent
+      discount_percent,
+      image_url
     } = req.body;
 
     const sql = `
@@ -568,9 +593,14 @@ export const updateMedicine = async (req, res) => {
         low_stock_threshold = COALESCE(?, low_stock_threshold),
         is_active = COALESCE(?, is_active),
         is_offer = COALESCE(?, is_offer),
-        discount_percent = COALESCE(?, discount_percent)
+        discount_percent = COALESCE(?, discount_percent),
+        image_url = CASE WHEN ? IS NOT NULL THEN ? ELSE image_url END
       WHERE medicine_id = ?
     `;
+
+    const sanitizedImageUrl = image_url !== undefined 
+      ? (typeof image_url === 'string' && image_url.trim().length > 0 ? image_url.trim() : null)
+      : null;
 
     const [result] = await pool.query(sql, [
       name ? name.trim() : null,
@@ -588,25 +618,168 @@ export const updateMedicine = async (req, res) => {
       is_active !== undefined ? Boolean(is_active) : null,
       is_offer !== undefined ? (Boolean(is_offer) ? 1 : 0) : null,
       discount_percent !== undefined ? parseFloat(discount_percent) : null,
+      image_url !== undefined ? 'SET_IMAGE' : null,
+      sanitizedImageUrl,
       medicineId
     ]);
 
     if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
-        message: 'Medicine not found.'
+        message: 'Medicine formulation not found.'
       });
     }
 
     res.status(200).json({
       success: true,
-      message: 'Medicine successfully updated.'
+      message: 'Medicine formulation successfully updated.',
+      image_url: sanitizedImageUrl
     });
   } catch (error) {
     console.error('[Update Medicine Error]:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to update medicine record.',
+      message: 'Failed to update medicine formulation.',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * POST /api/admin/medicines/upload-image
+ * Dedicated file upload endpoint for medicine packaging photography
+ * Stores image in /uploads/medicines and mirrors to /public/medicines
+ */
+export const uploadMedicineImage = async (req, res) => {
+  try {
+    const { imageBase64, fileName = 'medicine_pack.jpg' } = req.body;
+    if (!imageBase64) {
+      return res.status(400).json({
+        success: false,
+        message: 'No image data provided for upload.'
+      });
+    }
+
+    // Extract base64 payload and determine file extension
+    let fileData = imageBase64;
+    let extension = '.jpg';
+    const match = imageBase64.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
+    if (match) {
+      const rawExt = match[1].toLowerCase();
+      extension = rawExt === 'jpeg' ? '.jpg' : `.${rawExt}`;
+      fileData = match[2];
+    } else if (fileName && fileName.includes('.')) {
+      extension = path.extname(fileName).toLowerCase() || '.jpg';
+    }
+
+    const buffer = Buffer.from(fileData, 'base64');
+    if (buffer.length > 10 * 1024 * 1024) {
+      return res.status(400).json({
+        success: false,
+        message: 'Image size exceeds maximum limit of 10MB.'
+      });
+    }
+
+    // Generate sanitized unique filename
+    const cleanRawName = path.basename(fileName, path.extname(fileName))
+      .replace(/[^a-zA-Z0-9_\-\s]/g, '')
+      .trim()
+      .replace(/\s+/g, '_') || 'med';
+    const safeFileName = `${cleanRawName}_${Date.now()}${extension}`;
+
+    // 1. Save to backend /uploads/medicines/
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const backendUploadDir = path.resolve(__dirname, '../uploads/medicines');
+    if (!fs.existsSync(backendUploadDir)) {
+      fs.mkdirSync(backendUploadDir, { recursive: true });
+    }
+    const backendFilePath = path.join(backendUploadDir, safeFileName);
+    fs.writeFileSync(backendFilePath, buffer);
+
+    // 2. Also mirror to frontend/public/medicines/ if folder exists (ensures instant offline availability)
+    try {
+      const frontendMedicinesDir = path.resolve(__dirname, '../../frontend/public/medicines');
+      if (fs.existsSync(frontendMedicinesDir)) {
+        const frontendFilePath = path.join(frontendMedicinesDir, safeFileName);
+        fs.writeFileSync(frontendFilePath, buffer);
+      }
+    } catch (mirrorErr) {
+      console.warn('[Image Mirror Notice]:', mirrorErr.message);
+    }
+
+    const publicUrl = `/uploads/medicines/${safeFileName}`;
+    res.status(200).json({
+      success: true,
+      message: 'Medicine photo uploaded successfully.',
+      image_url: publicUrl,
+      fileName: safeFileName
+    });
+  } catch (error) {
+    console.error('[Upload Medicine Image Error]:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process and save medicine image.',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * GET /api/admin/medicines/library-images
+ * Returns pre-existing and uploaded medicine packaging images
+ */
+export const getMedicineLibraryImages = async (req, res) => {
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const frontendMedicinesDir = path.resolve(__dirname, '../../frontend/public/medicines');
+    const backendUploadDir = path.resolve(__dirname, '../uploads/medicines');
+
+    const imageMap = new Map();
+
+    // 1. Scan frontend public medicines
+    if (fs.existsSync(frontendMedicinesDir)) {
+      const files = fs.readdirSync(frontendMedicinesDir);
+      for (const file of files) {
+        const ext = path.extname(file).toLowerCase();
+        if (['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) {
+          imageMap.set(file, {
+            name: file.replace(ext, ''),
+            fileName: file,
+            url: `/medicines/${encodeURIComponent(file)}`
+          });
+        }
+      }
+    }
+
+    // 2. Scan backend uploads
+    if (fs.existsSync(backendUploadDir)) {
+      const files = fs.readdirSync(backendUploadDir);
+      for (const file of files) {
+        const ext = path.extname(file).toLowerCase();
+        if (['.jpg', '.jpeg', '.png', '.webp', '.svg'].includes(ext)) {
+          imageMap.set(file, {
+            name: file.replace(ext, ''),
+            fileName: file,
+            url: `/uploads/medicines/${encodeURIComponent(file)}`
+          });
+        }
+      }
+    }
+
+    const images = Array.from(imageMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+    res.status(200).json({
+      success: true,
+      count: images.length,
+      data: images
+    });
+  } catch (error) {
+    console.error('[Library Images Error]:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve image library.',
       error: error.message
     });
   }
@@ -1228,25 +1401,103 @@ export const getExpiringBatchesReport = async (req, res) => {
  * GET /api/admin/audit-logs
  * Optional query: startDate, endDate
  */
+let auditRoutinesEnsured = false;
+async function ensureAuditRoutines() {
+  if (auditRoutinesEnsured) return;
+  try {
+    // Create or Replace ADBMS View: v_enriched_audit_feed
+    await pool.query(`
+      CREATE OR REPLACE VIEW v_enriched_audit_feed AS
+      SELECT 
+          a.log_id,
+          a.timestamp,
+          a.table_name,
+          a.operation,
+          a.record_id,
+          CASE 
+              WHEN a.table_name = 'medicine_batches' THEN 
+                  COALESCE(CONCAT(m.name, ' (Lot #', b.batch_number, ')'), CONCAT('Batch #', a.record_id))
+              WHEN a.table_name = 'medicines' THEN 
+                  COALESCE(m_direct.name, CONCAT('Medicine #', a.record_id))
+              ELSE CONCAT(a.table_name, ' #', a.record_id)
+          END AS target_name,
+          CAST(a.old_value->>'$.stock_quantity' AS SIGNED) AS old_stock,
+          CAST(a.new_value->>'$.stock_quantity' AS SIGNED) AS new_stock,
+          (CAST(a.new_value->>'$.stock_quantity' AS SIGNED) - CAST(a.old_value->>'$.stock_quantity' AS SIGNED)) AS stock_diff,
+          a.old_value->>'$.status' AS old_status,
+          a.new_value->>'$.status' AS new_status,
+          COALESCE(
+            CASE 
+              WHEN a.table_name = 'medicine_batches' AND a.operation = 'UPDATE' AND (a.old_value->>'$.stock_quantity' != a.new_value->>'$.stock_quantity')
+              THEN CONCAT('Stock changed: ', a.old_value->>'$.stock_quantity', ' → ', a.new_value->>'$.stock_quantity')
+              WHEN a.table_name = 'medicine_batches' AND a.operation = 'UPDATE' AND (a.old_value->>'$.status' != a.new_value->>'$.status')
+              THEN CONCAT('Status changed: ', a.old_value->>'$.status', ' → ', a.new_value->>'$.status')
+              ELSE CONCAT(a.operation, ' on ', a.table_name)
+            END,
+            CONCAT(a.operation, ' on ', a.table_name)
+          ) AS action_summary,
+          a.performed_by,
+          a.old_value,
+          a.new_value
+      FROM audit_logs a
+      LEFT JOIN medicine_batches b ON a.table_name = 'medicine_batches' AND a.record_id = b.batch_id
+      LEFT JOIN medicines m ON b.medicine_id = m.medicine_id
+      LEFT JOIN medicines m_direct ON a.table_name = 'medicines' AND a.record_id = m_direct.medicine_id
+    `);
+    auditRoutinesEnsured = true;
+  } catch (vErr) {
+    console.warn('[Audit View Setup Notice]:', vErr.message);
+  }
+}
+
+/**
+ * GET /api/admin/audit-logs
+ * Retrieves enriched audit activity trail via ADBMS view v_enriched_audit_feed
+ */
 export const getAuditLogs = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
-    let whereClauses = [];
-    let params = [];
+    const { module: mod, operation, startDate, endDate, limit } = req.query;
+    await ensureAuditRoutines();
 
-    if (startDate) {
-      whereClauses.push('timestamp >= ?');
-      params.push(`${startDate} 00:00:00`);
+    let rows = [];
+    try {
+      let whereClauses = [];
+      let params = [];
+
+      if (mod && mod !== 'ALL') {
+        whereClauses.push('table_name = ?');
+        params.push(mod);
+      }
+      if (operation && operation !== 'ALL') {
+        whereClauses.push('operation = ?');
+        params.push(operation);
+      }
+      if (startDate) {
+        whereClauses.push('timestamp >= ?');
+        params.push(`${startDate} 00:00:00`);
+      }
+      if (endDate) {
+        whereClauses.push('timestamp <= ?');
+        params.push(`${endDate} 23:59:59`);
+      }
+
+      const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+      const limitNum = parseInt(limit, 10) || 200;
+      params.push(limitNum);
+
+      const [viewRows] = await pool.query(
+        `SELECT * FROM v_enriched_audit_feed ${whereSql} ORDER BY timestamp DESC LIMIT ?`,
+        params
+      );
+      rows = viewRows;
+    } catch (viewError) {
+      // Safe fallback directly from audit_logs
+      const [rawRows] = await pool.query(
+        'SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 200'
+      );
+      rows = rawRows;
     }
-    if (endDate) {
-      whereClauses.push('timestamp <= ?');
-      params.push(`${endDate} 23:59:59`);
-    }
 
-    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-    const sql = `SELECT * FROM audit_logs ${whereSql} ORDER BY timestamp DESC LIMIT 200`;
-
-    const [rows] = await pool.query(sql, params);
     res.status(200).json({
       success: true,
       count: rows.length,
@@ -1940,17 +2191,10 @@ export const getInventoryValuationReport = async (req, res) => {
 };
 
 /**
- * Helper to ensure permissions column exists safely without throwing
+ * Permissions column in users table is managed via database/schema.sql
  */
-let permissionsColumnChecked = false;
 async function ensurePermissionsColumn() {
-  if (permissionsColumnChecked) return;
-  try {
-    await pool.query('ALTER TABLE users ADD COLUMN permissions TEXT NULL');
-  } catch (e) {
-    // Column already exists or table structure error
-  }
-  permissionsColumnChecked = true;
+  return true;
 }
 
 /**
@@ -1995,7 +2239,8 @@ export const getUsers = async (req, res) => {
             can_manage_batches: true,
             can_view_reports: true,
             can_view_audit: true,
-            can_manage_users: true
+            can_manage_users: true,
+            can_manage_inquiries: true
           };
         } else {
           perms = {
@@ -2003,6 +2248,7 @@ export const getUsers = async (req, res) => {
             can_manage_medicines: true,
             can_manage_batches: true,
             can_view_reports: false,
+            can_manage_inquiries: false,
             can_view_audit: false,
             can_manage_users: false
           };
@@ -2054,7 +2300,8 @@ export const createUser = async (req, res) => {
       can_manage_batches: assignedRole === 'ADMIN',
       can_view_reports: assignedRole === 'ADMIN',
       can_view_audit: assignedRole === 'ADMIN',
-      can_manage_users: assignedRole === 'ADMIN'
+      can_manage_users: assignedRole === 'ADMIN',
+      can_manage_inquiries: assignedRole === 'ADMIN'
     });
 
     let result;
@@ -2625,6 +2872,13 @@ export const updateInquiryStatus = async (req, res) => {
     const { status, staff_notes } = req.body;
     const staffName = req.user ? req.user.fullName : 'Admin Pharmacist';
 
+    if (req.user && req.user.role !== 'ADMIN' && req.user.permissions && req.user.permissions.can_manage_inquiries === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Inquiry Analyst edit privileges required to update inquiry status.'
+      });
+    }
+
     if (!['NEW', 'IN_REVIEW', 'RESOLVED'].includes(status)) {
       return res.status(400).json({
         success: false,
@@ -2658,5 +2912,227 @@ export const updateInquiryStatus = async (req, res) => {
     });
   }
 };
+
+/**
+ * POST /api/admin/inquiries/:id/respond
+ * Send an email response to customer inquiry and update inquiry status + audit log
+ */
+export const respondToInquiry = async (req, res) => {
+  try {
+    await ensureSalesTables();
+    const inquiryId = parseInt(req.params.id, 10);
+    const { response_message, subject, status = 'RESOLVED' } = req.body;
+    const staffName = req.user ? req.user.fullName : 'Registered Pharmacist';
+
+    if (req.user && req.user.role !== 'ADMIN' && req.user.permissions && req.user.permissions.can_manage_inquiries === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Inquiry Analyst edit privileges required to respond to customer inquiries.'
+      });
+    }
+
+    if (!response_message || !response_message.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Response message is mandatory.'
+      });
+    }
+
+    const [inquiries] = await pool.query(`
+      SELECT 
+        i.inquiry_id,
+        i.reference_code,
+        i.customer_id,
+        i.name,
+        i.phone,
+        i.email,
+        i.medicine_query,
+        i.message,
+        i.status
+      FROM inquiries i
+      WHERE i.inquiry_id = ?
+      LIMIT 1
+    `, [inquiryId]);
+
+    if (inquiries.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry record not found.'
+      });
+    }
+
+    const inquiry = inquiries[0];
+    const emailSubject = (subject && subject.trim()) 
+      ? subject.trim() 
+      : `Response to Inquiry [${inquiry.reference_code}] - My Pharmacist Dispensary`;
+
+    // 1. Update the database record with the response
+    await pool.query(`
+      UPDATE inquiries SET
+        status = ?,
+        staff_notes = ?,
+        responded_by = ?,
+        responded_at = CURRENT_TIMESTAMP
+      WHERE inquiry_id = ?
+    `, [status, response_message.trim(), staffName, inquiryId]);
+
+    let emailSent = false;
+    let emailError = null;
+
+    // 2. If customer provided email, dispatch response email via SMTP
+    if (inquiry.email && inquiry.email.includes('@')) {
+      try {
+        const { sendSmtpMail } = await import('../services/smtpClient.js');
+
+        const htmlContent = `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 620px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; color: #1e293b;">
+            <div style="border-bottom: 2px solid #0d9488; padding-bottom: 16px; margin-bottom: 20px;">
+              <h2 style="margin: 0; color: #0f766e; font-size: 20px; font-weight: 800;">My Pharmacist Dispensary</h2>
+              <p style="margin: 4px 0 0 0; color: #64748b; font-size: 13px;">Clinical Healthcare & Patient Consultation</p>
+            </div>
+
+            <p style="font-size: 15px; line-height: 1.5;">Dear <strong>${inquiry.name}</strong>,</p>
+            <p style="font-size: 14px; line-height: 1.6; color: #334155;">
+              Thank you for contacting My Pharmacist Dispensary regarding <em>"${inquiry.medicine_query || 'General Consultation'}"</em> (Reference: <span style="font-family: monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${inquiry.reference_code}</span>).
+            </p>
+
+            <div style="background-color: #f8fafc; border-left: 4px solid #94a3b8; border-radius: 6px; padding: 14px; margin: 18px 0;">
+              <p style="margin: 0; font-size: 12px; font-weight: bold; color: #475569; text-transform: uppercase; letter-spacing: 0.5px;">Your Original Inquiry:</p>
+              <p style="margin: 8px 0 0 0; font-size: 13px; color: #64748b; line-height: 1.5; font-style: italic;">"${inquiry.message}"</p>
+            </div>
+
+            <div style="background-color: #f0fdfa; border: 1px solid #ccfbf1; border-left: 4px solid #0d9488; border-radius: 6px; padding: 16px; margin: 20px 0;">
+              <p style="margin: 0; font-size: 12px; font-weight: bold; color: #0f766e; text-transform: uppercase; letter-spacing: 0.5px;">Dispensary Clinical Response:</p>
+              <p style="margin: 10px 0 0 0; font-size: 14px; color: #0f172a; line-height: 1.6; white-space: pre-line;">${response_message.trim()}</p>
+            </div>
+
+            <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #64748b;">
+              <p style="margin: 0;"><strong>Responded By:</strong> ${staffName}</p>
+              <p style="margin: 4px 0 0 0;"><strong>Response Date:</strong> ${new Date().toLocaleString()}</p>
+              <p style="margin: 12px 0 0 0; color: #94a3b8; font-size: 11px;">If you have further questions or need immediate prescription fulfillment, please visit our physical dispensary counter or reply to this email.</p>
+            </div>
+          </div>
+        `;
+
+        const plainText = `Dear ${inquiry.name},\n\n` +
+          `Thank you for contacting My Pharmacist Dispensary (Reference: ${inquiry.reference_code}).\n\n` +
+          `Your Inquiry:\n"${inquiry.message}"\n\n` +
+          `Clinical Response:\n${response_message.trim()}\n\n` +
+          `Responded By: ${staffName}\n` +
+          `Date: ${new Date().toLocaleString()}\n\n` +
+          `My Pharmacist Healthcare Team`;
+
+        await sendSmtpMail({
+          to: inquiry.email,
+          subject: emailSubject,
+          html: htmlContent,
+          text: plainText
+        });
+
+        emailSent = true;
+
+        try {
+          await pool.query(`
+            INSERT INTO notification_logs (
+              customer_id, recipient_email, recipient_name, subject, message_body, notification_type, status, sent_at
+            ) VALUES (?, ?, ?, ?, ?, 'INQUIRY_RESPONSE', 'SENT', CURRENT_TIMESTAMP)
+          `, [
+            inquiry.customer_id || null,
+            inquiry.email.trim(),
+            inquiry.name.trim(),
+            emailSubject,
+            plainText
+          ]);
+        } catch (logErr) {
+          console.warn('[Notification Log Warning]:', logErr.message);
+        }
+
+      } catch (err) {
+        console.error('[Inquiry SMTP Send Error]:', err);
+        emailError = err.message;
+
+        try {
+          await pool.query(`
+            INSERT INTO notification_logs (
+              customer_id, recipient_email, recipient_name, subject, message_body, notification_type, status, sent_at
+            ) VALUES (?, ?, ?, ?, ?, 'INQUIRY_RESPONSE', 'FAILED', CURRENT_TIMESTAMP)
+          `, [
+            inquiry.customer_id || null,
+            inquiry.email.trim(),
+            inquiry.name.trim(),
+            emailSubject,
+            `Failed to dispatch: ${err.message}`
+          ]);
+        } catch (e) {}
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: emailSent
+        ? `Response successfully sent to ${inquiry.email} and marked as ${status}.`
+        : inquiry.email
+          ? `Response saved to database. Email dispatch notice: ${emailError || 'Failed to connect to email provider'}.`
+          : `Response saved to database (no customer email was provided).`,
+      email_sent: emailSent,
+      email_error: emailError,
+      data: {
+        inquiry_id: inquiryId,
+        status,
+        staff_notes: response_message.trim(),
+        responded_by: staffName,
+        responded_at: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('[Admin Respond to Inquiry Error]:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process inquiry response.',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * DELETE /api/admin/inquiries/:id
+ * Permanently remove customer contact inquiry
+ */
+export const deleteInquiry = async (req, res) => {
+  try {
+    await ensureSalesTables();
+    const inquiryId = parseInt(req.params.id, 10);
+
+    if (req.user && req.user.role !== 'ADMIN' && req.user.permissions && req.user.permissions.can_manage_inquiries === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Inquiry Analyst edit privileges required to delete inquiries.'
+      });
+    }
+
+    const [result] = await pool.query('DELETE FROM inquiries WHERE inquiry_id = ?', [inquiryId]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry record not found.'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Customer inquiry deleted successfully.'
+    });
+  } catch (error) {
+    console.error('[Admin Delete Inquiry Error]:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete customer inquiry.',
+      error: error.message
+    });
+  }
+};
+
 
 

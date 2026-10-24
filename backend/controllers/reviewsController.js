@@ -3,7 +3,7 @@ import pool from '../config/db.js';
 let customerReviewsTableChecked = false;
 
 /**
- * Ensure customer_reviews table exists with baseline verified patient feedback
+ * Reviews table and seed data are managed strictly in database/schema.sql and database/seed.sql
  */
 export async function ensureCustomerReviewsTable() {
   if (customerReviewsTableChecked) return;
@@ -46,16 +46,12 @@ export async function ensureCustomerReviewsTable() {
   }
 }
 
-// Initialize on module load
-ensureCustomerReviewsTable();
-
 /**
  * GET /api/reviews
  * Retrieve all approved patient reviews directly from MySQL database
  */
 export const getApprovedReviews = async (req, res) => {
   try {
-    await ensureCustomerReviewsTable();
     const sql = `
       SELECT 
         r.review_id,
@@ -73,7 +69,7 @@ export const getApprovedReviews = async (req, res) => {
         m.name AS medicine_name
       FROM customer_reviews r
       LEFT JOIN medicines m ON r.medicine_id = m.medicine_id
-      WHERE r.is_approved = TRUE
+      WHERE r.is_approved = TRUE AND r.rating BETWEEN 4 AND 5
       ORDER BY r.created_at DESC
       LIMIT 100
     `;
@@ -101,7 +97,6 @@ export const getApprovedReviews = async (req, res) => {
  */
 export const createReview = async (req, res) => {
   try {
-    await ensureCustomerReviewsTable();
     const {
       patient_name,
       rating,
@@ -181,7 +176,6 @@ export const createReview = async (req, res) => {
  */
 export const voteReviewHelpful = async (req, res) => {
   try {
-    await ensureCustomerReviewsTable();
     const reviewId = parseInt(req.params.id, 10);
 
     const [result] = await pool.query(`

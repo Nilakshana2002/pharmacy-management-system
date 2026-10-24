@@ -211,6 +211,55 @@ BEGIN
     RETURN v_total;
 END$$
 
+-- 1.14 Format Audit Trail Action Summary
+DROP FUNCTION IF EXISTS fn_format_audit_action$$
+CREATE FUNCTION fn_format_audit_action(
+    p_table_name VARCHAR(50),
+    p_operation VARCHAR(20),
+    p_old_value JSON,
+    p_new_value JSON
+)
+RETURNS VARCHAR(255)
+DETERMINISTIC
+NO SQL
+BEGIN
+    DECLARE v_old_stock INT;
+    DECLARE v_new_stock INT;
+    DECLARE v_delta INT;
+    DECLARE v_old_status VARCHAR(50);
+    DECLARE v_new_status VARCHAR(50);
+
+    IF p_table_name = 'medicine_batches' THEN
+        SET v_old_stock  = CAST(p_old_value->>'$.stock_quantity' AS SIGNED);
+        SET v_new_stock  = CAST(p_new_value->>'$.stock_quantity' AS SIGNED);
+        SET v_old_status = p_old_value->>'$.status';
+        SET v_new_status = p_new_value->>'$.status';
+
+        IF p_operation = 'INSERT' THEN
+            RETURN CONCAT('New lot received: ', COALESCE(v_new_stock, 0), ' units');
+        ELSEIF p_operation = 'UPDATE' THEN
+            IF v_old_status IS NOT NULL AND v_new_status IS NOT NULL AND v_old_status != v_new_status THEN
+                RETURN CONCAT('Lot status changed: ', v_old_status, ' → ', v_new_status);
+            ELSEIF v_old_stock IS NOT NULL AND v_new_stock IS NOT NULL AND v_old_stock != v_new_stock THEN
+                SET v_delta = v_new_stock - v_old_stock;
+                IF v_delta < 0 THEN
+                    RETURN CONCAT('Stock decreased: ', v_old_stock, ' → ', v_new_stock, ' (', v_delta, ')');
+                ELSE
+                    RETURN CONCAT('Stock increased: ', v_old_stock, ' → ', v_new_stock, ' (+', v_delta, ')');
+                END IF;
+            END IF;
+        ELSEIF p_operation = 'DELETE' THEN
+            RETURN 'Batch lot record removed';
+        END IF;
+    END IF;
+
+    IF p_table_name = 'medicines' THEN
+        RETURN CONCAT(p_operation, ' on medicine formulary');
+    END IF;
+
+    RETURN CONCAT(p_operation, ' on ', p_table_name);
+END$$
+
 DELIMITER ;
 
 
@@ -429,7 +478,7 @@ SELECT
     r.created_at
 FROM customer_reviews r
 LEFT JOIN medicines m ON r.medicine_id = m.medicine_id
-WHERE r.is_approved = TRUE;
+WHERE r.is_approved = TRUE AND r.rating BETWEEN 4 AND 5;
 
 
 -- 2.11 Customer Dispensation History View
@@ -481,6 +530,7 @@ CREATE VIEW v_prescription_fulfillment_pipeline AS
 SELECT 
     po.order_id,
     po.account_type,
+    po.customer_id,
     po.your_name AS patient_name,
     po.your_email,
     po.contact_no,
@@ -489,9 +539,32 @@ SELECT
     po.files_count,
     po.pharmacist_name,
     po.reviewed_at,
+    po.confirmation_message,
+    po.rejection_reason,
+    po.ready_time,
     po.created_at,
     TIMESTAMPDIFF(MINUTE, po.created_at, COALESCE(po.reviewed_at, NOW())) AS processing_minutes
 FROM prescription_orders po;
+
+
+-- 2.15 Patient Inquiries & Consultations View
+DROP VIEW IF EXISTS v_patient_inquiries;
+CREATE VIEW v_patient_inquiries AS
+SELECT 
+    i.inquiry_id,
+    i.reference_code,
+    i.customer_id,
+    i.name AS patient_name,
+    i.email AS patient_email,
+    i.phone,
+    i.medicine_query,
+    i.message,
+    i.status,
+    i.staff_notes,
+    i.responded_by,
+    i.responded_at,
+    i.created_at
+FROM inquiries i;
 
 
 -- 2.14 Pharmacist Dispensing Workload View
@@ -508,6 +581,37 @@ SELECT
 FROM users u
 LEFT JOIN sales s ON u.user_id = s.user_id
 GROUP BY u.user_id, u.username, u.full_name, u.role;
+
+
+-- 2.16 Enriched Audit Trail & Activity Feed View
+DROP VIEW IF EXISTS v_enriched_audit_feed;
+CREATE VIEW v_enriched_audit_feed AS
+SELECT 
+    a.log_id,
+    a.timestamp,
+    a.table_name,
+    a.operation,
+    a.record_id,
+    CASE 
+        WHEN a.table_name = 'medicine_batches' THEN 
+            COALESCE(CONCAT(m.name, ' (Lot #', b.batch_number, ')'), CONCAT('Batch #', a.record_id))
+        WHEN a.table_name = 'medicines' THEN 
+            COALESCE(m_direct.name, CONCAT('Medicine #', a.record_id))
+        ELSE CONCAT(a.table_name, ' #', a.record_id)
+    END AS target_name,
+    CAST(a.old_value->>'$.stock_quantity' AS SIGNED) AS old_stock,
+    CAST(a.new_value->>'$.stock_quantity' AS SIGNED) AS new_stock,
+    (CAST(a.new_value->>'$.stock_quantity' AS SIGNED) - CAST(a.old_value->>'$.stock_quantity' AS SIGNED)) AS stock_diff,
+    a.old_value->>'$.status' AS old_status,
+    a.new_value->>'$.status' AS new_status,
+    fn_format_audit_action(a.table_name, a.operation, a.old_value, a.new_value) AS action_summary,
+    a.performed_by,
+    a.old_value,
+    a.new_value
+FROM audit_logs a
+LEFT JOIN medicine_batches b ON a.table_name = 'medicine_batches' AND a.record_id = b.batch_id
+LEFT JOIN medicines m ON b.medicine_id = m.medicine_id
+LEFT JOIN medicines m_direct ON a.table_name = 'medicines' AND a.record_id = m_direct.medicine_id;
 
 
 
@@ -1033,6 +1137,42 @@ BEGIN
     WHERE inquiry_id = p_inquiry_id;
 
     SELECT p_inquiry_id AS inquiry_id, 'Inquiry successfully updated with staff response.' AS result;
+END$$
+
+-- 3.12 Retrieve Filtered Enriched Audit Trail Feed
+DROP PROCEDURE IF EXISTS sp_get_audit_trail_feed$$
+CREATE PROCEDURE sp_get_audit_trail_feed(
+    IN p_table_name VARCHAR(50),
+    IN p_operation VARCHAR(20),
+    IN p_limit INT
+)
+BEGIN
+    DECLARE v_limit INT DEFAULT 100;
+    IF p_limit IS NOT NULL AND p_limit > 0 THEN 
+        SET v_limit = p_limit; 
+    END IF;
+
+    SELECT 
+        log_id,
+        timestamp,
+        table_name,
+        operation,
+        record_id,
+        target_name,
+        old_stock,
+        new_stock,
+        stock_diff,
+        old_status,
+        new_status,
+        action_summary,
+        performed_by,
+        old_value,
+        new_value
+    FROM v_enriched_audit_feed
+    WHERE (p_table_name IS NULL OR p_table_name = '' OR table_name = p_table_name)
+      AND (p_operation IS NULL OR p_operation = '' OR operation = p_operation)
+    ORDER BY timestamp DESC
+    LIMIT v_limit;
 END$$
 
 DELIMITER ;

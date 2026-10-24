@@ -180,7 +180,7 @@ export const verifySmtpConnection = async () => {
 };
 
 /**
- * Sends an email using native TLS or STARTTLS direct to SMTP server
+ * Sends an email using native TLS direct to SMTP server
  */
 const sendViaNativeTls = ({ host, port, user, pass, from, fromName, to, subject, text, html }) => {
   return new Promise((resolve, reject) => {
@@ -188,40 +188,58 @@ const sendViaNativeTls = ({ host, port, user, pass, from, fromName, to, subject,
     let timer = null;
     let buffer = '';
     let step = 0;
-    let closed = false;
+    let isResolved = false;
 
     const cleanup = () => {
       if (timer) clearTimeout(timer);
-      if (socket && !closed) {
-        closed = true;
+      if (socket) {
+        try { socket.removeAllListeners('data'); } catch (e) {}
         try { socket.end(); } catch (e) {}
-        try { socket.destroy(); } catch (e) {}
       }
     };
 
-    timer = setTimeout(() => {
+    const fail = (err) => {
+      if (isResolved) return;
+      isResolved = true;
       cleanup();
-      reject(new Error(`SMTP connection timed out after 25s connecting to ${host}:${port}`));
-    }, 25000);
+      reject(err);
+    };
+
+    const succeed = (data) => {
+      if (isResolved) return;
+      isResolved = true;
+      cleanup();
+      resolve(data);
+    };
+
+    timer = setTimeout(() => {
+      fail(new Error(`SMTP connection timed out after 30s connecting to ${host}:${port}`));
+    }, 30000);
 
     const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const msgId = `<${Date.now()}.${Math.random().toString(36).substring(2, 9)}@${host}>`;
+    const logTrace = (msg) => {
+      try {
+        const traceFile = path.join(__dirname, '..', 'data', 'smtp_trace.log');
+        fs.appendFileSync(traceFile, `[${new Date().toISOString()}] ${msg}\n`);
+      } catch (e) {}
+    };
 
-    const handleStep = (code, fullResponse) => {
-      const lines = fullResponse.split(/\r?\n/).filter(l => l.trim().length > 0);
-      const lastLine = lines[lines.length - 1] || '';
+    logTrace(`Starting sendViaNativeTls to: ${to}, from: ${from}, host: ${host}:${port}`);
 
+    const handleStep = (code, lastLine) => {
+      logTrace(`Step: ${step}, Received Code: ${code}, LastLine: ${lastLine}`);
       if (code >= 400) {
-        cleanup();
-        return reject(new Error(`SMTP error (${code}): ${lastLine}`));
+        logTrace(`SMTP Failure: code=${code}, msg=${lastLine}`);
+        return fail(new Error(`SMTP error (${code}): ${lastLine}`));
       }
 
       if (step === 0) {
-        // 220 banner received
+        // 220 Greeting banner received
         step = 1;
         socket.write('EHLO localhost\r\n');
       } else if (step === 1) {
-        // 250 EHLO received
+        // 250 EHLO completed
         step = 2;
         socket.write('AUTH LOGIN\r\n');
       } else if (step === 2) {
@@ -235,20 +253,23 @@ const sendViaNativeTls = ({ host, port, user, pass, from, fromName, to, subject,
       } else if (step === 4) {
         // 235 Authentication successful
         if (code !== 235) {
-          throw new Error(`SMTP authentication failed (${code}): ${lastLine}`);
+          return fail(new Error(`SMTP authentication failed (${code}): ${lastLine}`));
         }
         step = 5;
         socket.write(`MAIL FROM:<${from}>\r\n`);
       } else if (step === 5) {
-        // 250 MAIL FROM ok
+        // 250 Sender OK
         step = 6;
         socket.write(`RCPT TO:<${to}>\r\n`);
       } else if (step === 6) {
-        // 250 RCPT TO ok
+        // 250 Recipient OK
         step = 7;
         socket.write('DATA\r\n');
       } else if (step === 7) {
         // 354 Start mail input
+        if (code !== 354) {
+          return fail(new Error(`SMTP DATA rejected (${code}): ${lastLine}`));
+        }
         step = 8;
 
         const encodedSubject = `=?UTF-8?B?${Buffer.from(subject || 'Notification', 'utf8').toString('base64')}?=`;
@@ -284,9 +305,13 @@ const sendViaNativeTls = ({ host, port, user, pass, from, fromName, to, subject,
       } else if (step === 8) {
         // 250 Message accepted for delivery
         step = 9;
-        try { socket.write('QUIT\r\n'); } catch (e) {}
-        cleanup();
-        resolve({
+        try { 
+          socket.write('QUIT\r\n', () => {
+            try { socket.end(); } catch (e) {}
+          }); 
+        } catch (e) {}
+
+        succeed({
           success: true,
           messageId: msgId,
           response: lastLine,
@@ -297,20 +322,21 @@ const sendViaNativeTls = ({ host, port, user, pass, from, fromName, to, subject,
 
     const onData = (chunk) => {
       buffer += chunk;
+      // An SMTP reply is complete when a line begins with 3 digits followed by a space (or end)
+      // Multiline responses have hyphens e.g. "250-..." until the final line "250 ..."
       const lines = buffer.split(/\r?\n/).filter(l => l.trim().length > 0);
       const lastLine = lines[lines.length - 1] || '';
+
       const match = lastLine.match(/^(\d{3})(?: (.*))?$/);
-      if (!match) return;
+      if (!match) return; // Keep buffering if not a terminal line
 
       const code = parseInt(match[1], 10);
-      const full = buffer;
       buffer = '';
 
       try {
-        handleStep(code, full);
+        handleStep(code, lastLine);
       } catch (err) {
-        cleanup();
-        reject(err);
+        fail(err);
       }
     };
 
@@ -332,8 +358,13 @@ const sendViaNativeTls = ({ host, port, user, pass, from, fromName, to, subject,
     }
 
     socket.on('error', (err) => {
-      cleanup();
-      reject(new Error(`Socket connection error to ${host}:${port} — ${err.message}`));
+      fail(new Error(`Socket error connecting to ${host}:${port} — ${err.message}`));
+    });
+
+    socket.on('close', () => {
+      if (!isResolved && step < 8) {
+        fail(new Error(`SMTP connection closed prematurely at step ${step}.`));
+      }
     });
   });
 };

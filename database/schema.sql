@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash VARCHAR(255) NOT NULL,
     role ENUM('ADMIN', 'PHARMACIST') NOT NULL DEFAULT 'PHARMACIST',
     full_name VARCHAR(100) NOT NULL,
+    permissions TEXT NULL,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
@@ -452,7 +453,9 @@ CREATE TABLE IF NOT EXISTS inquiries (
     CONSTRAINT fk_inquiries_customer FOREIGN KEY (customer_id)
         REFERENCES customers(customer_id) ON DELETE SET NULL,
     INDEX idx_inquiries_ref (reference_code),
-    INDEX idx_inquiries_status (status)
+    INDEX idx_inquiries_status (status),
+    INDEX idx_inquiries_customer (customer_id),
+    INDEX idx_inquiries_email (email)
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------

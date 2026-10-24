@@ -76,7 +76,11 @@ export async function initializeDatabaseCatalog() {
 
     if (!colNames.includes('image_url')) {
       console.log('[DB Migration] Adding image_url column to medicines...');
-      await pool.query('ALTER TABLE medicines ADD COLUMN image_url VARCHAR(255) NULL');
+      await pool.query('ALTER TABLE medicines ADD COLUMN image_url TEXT NULL');
+    } else {
+      try {
+        await pool.query('ALTER TABLE medicines MODIFY COLUMN image_url TEXT NULL');
+      } catch (modErr) {}
     }
 
     // 1.1 Ensure image_url and parent_category_id columns exist in medicine_categories

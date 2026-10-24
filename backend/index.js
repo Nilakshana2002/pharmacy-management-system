@@ -16,7 +16,20 @@ import promotionsRoutes from './routes/promotions.js';
 import reviewsRoutes from './routes/reviews.js';
 import inquiriesRoutes from './routes/inquiries.js';
 
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Ensure upload directories exist
+const uploadDir = path.join(__dirname, 'uploads', 'medicines');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -25,6 +38,9 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Static uploads serving
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Mount Customer & Public Endpoints
 app.use('/api/medicines', medicinesRoutes);
@@ -62,6 +78,7 @@ app.get('/api/health', async (req, res) => {
     });
   }
 });
+
 
 // 404 Handler
 app.use((req, res) => {

@@ -12,7 +12,7 @@ import {
 let prescriptionOrdersTableEnsured = false;
 
 /**
- * Ensures prescription_orders table exists in MySQL database
+ * Prescription orders and prescription_files tables are managed via database/schema.sql
  */
 export const ensurePrescriptionOrdersTable = async () => {
   if (prescriptionOrdersTableEnsured) return;
@@ -84,9 +84,6 @@ export const ensurePrescriptionOrdersTable = async () => {
     // Schema is managed via database/schema.sql; DDL is intentionally denied to app user under least-privilege
   }
 };
-
-// Initialize table on load
-ensurePrescriptionOrdersTable();
 
 /**
  * Helper to parse files and pharmacist_review
@@ -180,15 +177,27 @@ export const createPrescriptionOrder = async (req, res) => {
 
     // System identification: Is user registered in the customers database?
     let resolvedAccountType = account_type === 'registered' ? 'registered' : 'guest';
-    let resolvedCustomerId = customer_id ? parseInt(customer_id, 10) : null;
+    let resolvedCustomerId = null;
+
+    // Validate if customer_id is a valid MySQL INT (<= 2,147,483,647) to avoid ER_WARN_DATA_OUT_OF_RANGE
+    const rawCustomerId = customer_id ? parseInt(customer_id, 10) : null;
+    const isValidIntId = rawCustomerId && !isNaN(rawCustomerId) && rawCustomerId > 0 && rawCustomerId <= 2147483647;
 
     try {
-      const [custRows] = await pool.query(`
+      let querySql = `
         SELECT customer_id, full_name, email, contact_no, nic, address, created_at
         FROM customers
-        WHERE LOWER(TRIM(email)) = ? OR customer_id = ?
-        LIMIT 1
-      `, [safeYourEmail, resolvedCustomerId || -1]);
+        WHERE LOWER(TRIM(email)) = ?
+      `;
+      let queryParams = [safeYourEmail];
+
+      if (isValidIntId) {
+        querySql += ` OR customer_id = ?`;
+        queryParams.push(rawCustomerId);
+      }
+      querySql += ` LIMIT 1`;
+
+      const [custRows] = await pool.query(querySql, queryParams);
 
       if (custRows.length > 0) {
         resolvedAccountType = 'registered';
@@ -196,6 +205,7 @@ export const createPrescriptionOrder = async (req, res) => {
       }
     } catch (e) {
       console.warn('[Check Registered Customer Error]:', e.message);
+      resolvedCustomerId = null;
     }
 
     // Generate unique order ID: RX-2026-XXXX or use provided client order ID
@@ -673,14 +683,15 @@ export const testSmtpStatus = async (req, res) => {
  */
 export const testDispatchEmail = async (req, res) => {
   try {
-    const { toEmail } = req.body;
+    const toEmail = req.body?.toEmail || req.query?.toEmail || process.env.SMTP_USER;
     const result = await sendTestEmail(toEmail);
     res.status(200).json({
       success: true,
-      message: `Test email dispatched successfully.`,
+      message: `Test email dispatched successfully to ${toEmail}.`,
       result
     });
   } catch (error) {
+    console.error('[Test Email Error]:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to dispatch test email.'
