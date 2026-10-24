@@ -9,11 +9,80 @@ import {
   getMailOutbox 
 } from '../services/simpleMailService.js';
 
+let prescriptionOrdersTableEnsured = false;
+
 /**
  * Prescription orders and prescription_files tables are managed via database/schema.sql
  */
 export const ensurePrescriptionOrdersTable = async () => {
-  return true;
+  if (prescriptionOrdersTableEnsured) return;
+  prescriptionOrdersTableEnsured = true;
+  try {
+    const createSql = `
+      CREATE TABLE IF NOT EXISTS prescription_orders (
+        order_id VARCHAR(50) PRIMARY KEY,
+        account_type ENUM('registered', 'guest') NOT NULL DEFAULT 'guest',
+        customer_id INT NULL,
+        your_name VARCHAR(150) NOT NULL,
+        your_email VARCHAR(150) NOT NULL,
+        patient_name VARCHAR(150) NULL,
+        patient_age VARCHAR(50) NULL,
+        contact_no VARCHAR(50) NULL,
+        delivery_option VARCHAR(100) DEFAULT 'Dispensary Counter Pickup (Free)',
+        files LONGTEXT,
+        message TEXT,
+        status ENUM('pending', 'accepted', 'rejected', 'dispensed') NOT NULL DEFAULT 'pending',
+        pharmacist_name VARCHAR(150) NULL,
+        reviewed_at DATETIME NULL,
+        confirmation_message TEXT NULL,
+        rejection_reason TEXT NULL,
+        ready_time VARCHAR(100) NULL,
+        email_sent TINYINT(1) DEFAULT 0,
+        email_sent_at DATETIME NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_rx_email (your_email),
+        INDEX idx_rx_status (status),
+        INDEX idx_rx_created (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `;
+    await pool.query(createSql);
+
+    // Ensure normalized 3NF child table prescription_files exists
+    const createFilesSql = `
+      CREATE TABLE IF NOT EXISTS prescription_files (
+        file_id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id VARCHAR(50) NOT NULL,
+        file_path VARCHAR(255) NULL,
+        file_name VARCHAR(255) NULL,
+        file_type VARCHAR(50) NULL,
+        file_size INT NULL,
+        file_data LONGTEXT NULL,
+        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_rx_files_order (order_id),
+        CONSTRAINT fk_rx_files_order FOREIGN KEY (order_id)
+          REFERENCES prescription_orders(order_id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `;
+    try {
+      await pool.query(createFilesSql);
+    } catch {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS prescription_files (
+          file_id INT AUTO_INCREMENT PRIMARY KEY,
+          order_id VARCHAR(50) NOT NULL,
+          file_path VARCHAR(255) NULL,
+          file_name VARCHAR(255) NULL,
+          file_type VARCHAR(50) NULL,
+          file_size INT NULL,
+          file_data LONGTEXT NULL,
+          uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_rx_files_order (order_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+    }
+  } catch {
+    // Schema is managed via database/schema.sql; DDL is intentionally denied to app user under least-privilege
+  }
 };
 
 /**
