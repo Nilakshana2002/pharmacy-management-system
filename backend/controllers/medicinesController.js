@@ -118,6 +118,18 @@ export const getMedicines = async (req, res) => {
           m.side_effects,
           m.usage_instructions,
           CASE WHEN m.is_public_price = TRUE THEN m.unit_price ELSE NULL END AS unit_price,
+          CASE WHEN m.is_public_price = TRUE THEN m.unit_price ELSE NULL END AS original_price,
+          CASE 
+            WHEN m.is_public_price = TRUE AND m.is_offer = TRUE AND m.discount_percent > 0 
+            THEN ROUND(m.unit_price * (1.00 - (m.discount_percent / 100.00)), 2)
+            WHEN m.is_public_price = TRUE THEN m.unit_price
+            ELSE NULL 
+          END AS final_price,
+          CASE 
+            WHEN m.is_public_price = TRUE AND m.is_offer = TRUE AND m.discount_percent > 0 
+            THEN ROUND(m.unit_price * (m.discount_percent / 100.00), 2)
+            ELSE 0.00 
+          END AS discount_amount,
           m.is_public_price,
           m.low_stock_threshold,
           COALESCE(m.discount_percent, 0.00) AS discount_percent,
@@ -205,6 +217,18 @@ export const getMedicineById = async (req, res) => {
         m.side_effects,
         m.usage_instructions,
         CASE WHEN m.is_public_price = TRUE THEN m.unit_price ELSE NULL END AS unit_price,
+        CASE WHEN m.is_public_price = TRUE THEN m.unit_price ELSE NULL END AS original_price,
+        CASE 
+          WHEN m.is_public_price = TRUE AND m.is_offer = TRUE AND m.discount_percent > 0 
+          THEN ROUND(m.unit_price * (1.00 - (m.discount_percent / 100.00)), 2)
+          WHEN m.is_public_price = TRUE THEN m.unit_price
+          ELSE NULL 
+        END AS final_price,
+        CASE 
+          WHEN m.is_public_price = TRUE AND m.is_offer = TRUE AND m.discount_percent > 0 
+          THEN ROUND(m.unit_price * (m.discount_percent / 100.00), 2)
+          ELSE 0.00 
+        END AS discount_amount,
         m.is_public_price,
         m.low_stock_threshold,
         COALESCE(m.discount_percent, 0.00) AS discount_percent,

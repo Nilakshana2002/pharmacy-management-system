@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { 
   X, Building2, Tag, ShieldCheck, AlertCircle, RefreshCw, 
   Phone, MapPin, Pill, CheckCircle2, ThermometerSnowflake, 
-  FileText, Clock, AlertTriangle, Info, Layers
+  FileText, Clock, AlertTriangle, Info, Layers, Flame, Sparkles
 } from 'lucide-react';
 import AvailabilityBadge from './AvailabilityBadge';
 import { getMedicineAvailability } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
 import { getMedicineProductImage } from '../utils/pharmacyImages';
+import { getMedicinePricing } from '../utils/medicinePricing';
 
 export default function MedicineDetailModal({ 
   medicine, 
@@ -19,6 +20,18 @@ export default function MedicineDetailModal({
   const [checking, setChecking] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [imgError, setImgError] = useState(false);
+
+  const {
+    isPublic,
+    isOffer,
+    regularPrice,
+    finalPrice,
+    discountPercent,
+    discountDeduction,
+    formattedFinalPrice,
+    formattedRegularPrice,
+    formattedDiscountDeduction
+  } = getMedicinePricing(medicine);
 
   useEffect(() => {
     if (medicine?.medicine_id) {
@@ -215,18 +228,52 @@ export default function MedicineDetailModal({
                 </div>
               </div>
 
-              {/* Price Row */}
-              <div className="flex items-baseline gap-3 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
+              {/* Price Row with Promotional Offer & Deduction Breakdown */}
+              <div className={`p-4 rounded-2xl border transition-all ${
+                isOffer 
+                  ? 'border-rose-300 dark:border-rose-900/60 bg-gradient-to-br from-rose-500/10 via-amber-500/5 to-transparent dark:bg-rose-950/20'
+                  : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40'
+              }`}>
                 <div className="flex-1">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-                    Official Counter Retail Price
-                  </span>
-                  {medicine.is_public_price && medicine.unit_price ? (
-                    <div className="flex items-baseline gap-2 mt-0.5">
-                      <span className="text-2xl font-black text-slate-900 dark:text-white">
-                        Rs. {Number(medicine.unit_price).toFixed(2)}
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">
+                      {isOffer ? 'Dispensary Promotional Offer Price' : 'Official Counter Retail Price'}
+                    </span>
+                    {isOffer && (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-600 text-white uppercase tracking-wider flex items-center gap-1 shadow-xs">
+                        <Flame className="w-3 h-3 animate-pulse" />
+                        <span>{discountPercent}% OFF</span>
                       </span>
-                      <span className="text-xs text-slate-400 font-medium">per unit</span>
+                    )}
+                  </div>
+
+                  {isPublic && regularPrice > 0 ? (
+                    <div>
+                      <div className="flex items-baseline gap-2.5 mt-0.5 flex-wrap">
+                        <span className={`text-3xl font-black ${
+                          isOffer ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'
+                        }`}>
+                          Rs. {formattedFinalPrice}
+                        </span>
+                        {isOffer && (
+                          <span className="text-sm font-semibold text-slate-400 line-through">
+                            Rs. {formattedRegularPrice}
+                          </span>
+                        )}
+                        <span className="text-xs text-slate-400 font-medium">per unit</span>
+                      </div>
+
+                      {isOffer && discountDeduction > 0 && (
+                        <div className="mt-2.5 pt-2 border-t border-rose-200/60 dark:border-rose-900/40 flex items-center justify-between text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                          <span className="flex items-center gap-1">
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Instant Promotional Savings:</span>
+                          </span>
+                          <span className="font-mono font-black">
+                            -Rs. {formattedDiscountDeduction} ({discountPercent}% Deducted)
+                          </span>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <span className="text-sm font-bold text-slate-600 dark:text-slate-400 mt-0.5 block">

@@ -176,6 +176,60 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   const [offerSaving, setOfferSaving] = useState(false);
   const [medOfferFilter, setMedOfferFilter] = useState('all'); // 'all' | 'offers' | 'regular'
 
+  // Audit Trail Enriched State
+  const [selectedAuditLogForModal, setSelectedAuditLogForModal] = useState(null);
+  const [auditModuleFilter, setAuditModuleFilter] = useState('ALL');
+  const [auditOperationFilter, setAuditOperationFilter] = useState('ALL');
+  const [auditSearchQuery, setAuditSearchQuery] = useState('');
+  const [auditRefreshing, setAuditRefreshing] = useState(false);
+
+  const parseAuditJson = (val) => {
+    if (!val) return null;
+    if (typeof val === 'object') return val;
+    try {
+      return JSON.parse(val);
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const handleRefreshAuditLogs = async (moduleParam = auditModuleFilter, opParam = auditOperationFilter) => {
+    try {
+      setAuditRefreshing(true);
+      const params = {};
+      if (moduleParam && moduleParam !== 'ALL') params.module = moduleParam;
+      if (opParam && opParam !== 'ALL') params.operation = opParam;
+      const res = await getAuditLogs(params);
+      if (res?.success && Array.isArray(res.data)) {
+        setAuditLogs(res.data);
+      }
+    } catch (err) {
+      console.error('Failed to refresh audit logs:', err);
+    } finally {
+      setAuditRefreshing(false);
+    }
+  };
+
+  const filteredAuditLogs = (auditLogs || []).filter((log) => {
+    if (!log) return false;
+    if (auditModuleFilter !== 'ALL' && log.table_name !== auditModuleFilter) {
+      return false;
+    }
+    if (auditOperationFilter !== 'ALL' && log.operation !== auditOperationFilter) {
+      return false;
+    }
+    if (auditSearchQuery.trim()) {
+      const q = auditSearchQuery.toLowerCase();
+      const target = (log.target_name || '').toLowerCase();
+      const action = (log.action_summary || '').toLowerCase();
+      const performer = (log.performed_by || '').toLowerCase();
+      const idStr = String(log.log_id || '');
+      const recIdStr = String(log.record_id || '');
+      return target.includes(q) || action.includes(q) || performer.includes(q) || idStr.includes(q) || recIdStr.includes(q);
+    }
+    return true;
+  });
+
   // Admin New Staff Modal state
   const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false);
   const [newUserForm, setNewUserForm] = useState({
@@ -918,7 +972,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         l.record_id,
         `"${(typeof l.old_value === 'string' ? l.old_value : JSON.stringify(l.old_value)).replace(/"/g, '""')}"`,
         `"${(typeof l.new_value === 'string' ? l.new_value : JSON.stringify(l.new_value)).replace(/"/g, '""')}"`,
-        `"${formatAuditCaller(l.performed_by)}"`,
+        `"${l.performed_by || 'System Trigger'}"`,
         `"${new Date(l.timestamp).toLocaleString()}"`
       ]);
       csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -1227,8 +1281,13 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   );
 
   const selectedDispenseBatch = batches.find(b => String(b.batch_id) === String(dispenseBatchId));
-  const liveUnitPrice = Number(selectedDispenseBatch?.unit_price || selectedDispenseMed?.unit_price || 0);
-  const liveTotalBill = liveUnitPrice * calculatedDispenseUnits;
+  const rawUnitPrice = Number(selectedDispenseBatch?.unit_price || selectedDispenseMed?.unit_price || 0);
+  const isMedOnOffer = Boolean(selectedDispenseMed?.is_offer) && Number(selectedDispenseMed?.discount_percent) > 0;
+  const medDiscountDeduction = isMedOnOffer ? (rawUnitPrice * Number(selectedDispenseMed.discount_percent)) / 100 : 0;
+  const liveUnitPrice = isMedOnOffer ? Number((rawUnitPrice - medDiscountDeduction).toFixed(2)) : rawUnitPrice;
+  const liveTotalBill = Number((liveUnitPrice * calculatedDispenseUnits).toFixed(2));
+  const liveOriginalTotalBill = Number((rawUnitPrice * calculatedDispenseUnits).toFixed(2));
+  const liveDiscountSavings = Number((medDiscountDeduction * calculatedDispenseUnits).toFixed(2));
 
   // Handler for category selection
   const handleSelectCategoryForDispense = (catId) => {
@@ -1787,6 +1846,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
     { id: 'medicines', label: `Formulary Master (${medicines.length})`, icon: Package, badge: null, show: true },
     { id: 'batches', label: `Batch & Stock (${batches.length})`, icon: Clock, badge: totalExpiryAlertCount > 0 ? `${totalExpiryAlertCount}` : null, badgeColor: expiredWithStockCount > 0 ? 'rose' : 'amber', show: true },
     { id: 'reports', label: 'Reports & Analytics', icon: BarChart3, badge: null, show: true },
+    { id: 'audit', label: `Audit Trail & Ledger (${auditLogs.length})`, icon: History, badge: 'Admin', badgeColor: 'emerald', show: true },
     { id: 'users', label: `User Management (${staffUsers.length + customers.length})`, icon: ShieldCheck, badge: 'Admin', show: true }
   ] : [
     { id: 'overview', label: 'Dispensary Overview', icon: Activity, badge: null, show: true },
@@ -2051,6 +2111,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                   activeTab === 'medicines' ? 'Formulary Master & Catalog Governance' :
                   activeTab === 'batches' ? 'Batch Stock & Supplier Supply Chain' :
                   activeTab === 'reports' ? 'Operational Reports & Financial Analytics' :
+                  activeTab === 'audit' ? 'System Audit Trail & Regulatory Change Ledger' :
                   activeTab === 'users' ? 'Staff User Accounts & Access Control' : 'Executive Portal'
                 ) : (
                   activeTab === 'overview' ? 'Dispensary Station & Prescription Queue' :
@@ -2106,6 +2167,21 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                 >
                   <BarChart3 className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">Analytics</span>
+                </button>
+
+                <button
+                  onClick={() => setActiveTab('audit')}
+                  className={`px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                    activeTab === 'audit'
+                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                      : isDark
+                      ? 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                  title="Open Operational Audit Trail & Ledger"
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Audit Trail ({auditLogs.length})</span>
                 </button>
 
                 <button
@@ -2257,6 +2333,13 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                       >
                         <BarChart3 className="w-4 h-4" />
                         Financial Intelligence
+                      </button>
+                      <button
+                        onClick={() => setActiveTab('audit')}
+                        className="px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center gap-2 cursor-pointer shadow-md shadow-teal-600/30 transition-all"
+                      >
+                        <History className="w-4 h-4" />
+                        Audit Trail & Ledger ({auditLogs.length})
                       </button>
                       <button
                         onClick={() => setActiveTab('users')}
@@ -3623,9 +3706,20 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                               {isOutOfStock ? 'Out of Stock' : `${m.total_saleable_stock} units`}
                             </span>
 
-                            <span className="font-black text-xs font-mono text-emerald-400">
-                              Rs. {Number(m.unit_price || 0).toFixed(2)}
-                            </span>
+                            {m.is_offer && Number(m.discount_percent) > 0 ? (
+                              <div className="text-right">
+                                <span className="font-black text-xs font-mono text-rose-400 block">
+                                  Rs. {(Number(m.unit_price || 0) * (1 - Number(m.discount_percent) / 100)).toFixed(2)}
+                                </span>
+                                <span className="text-[10px] font-mono text-slate-400 line-through block">
+                                  Rs. {Number(m.unit_price || 0).toFixed(2)}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="font-black text-xs font-mono text-emerald-400">
+                                Rs. {Number(m.unit_price || 0).toFixed(2)}
+                              </span>
+                            )}
                           </div>
                         </button>
                       );
@@ -4247,6 +4341,16 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                     <span className="text-2xl sm:text-3xl font-black text-emerald-400 font-mono block mt-0.5">
                       Rs. {liveTotalBill.toFixed(2)}
                     </span>
+                    {isMedOnOffer && liveDiscountSavings > 0 && (
+                      <div className="mt-1.5 flex items-center justify-center gap-2 text-xs font-bold flex-wrap">
+                        <span className="text-slate-400 line-through font-mono">
+                          Rs. {liveOriginalTotalBill.toFixed(2)}
+                        </span>
+                        <span className="text-rose-500 font-mono">
+                          -Rs. {liveDiscountSavings.toFixed(2)} ({selectedDispenseMed?.discount_percent}% OFF)
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Payment Method Selector (Pay by Cash default, or Card) */}
@@ -4560,8 +4664,21 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                         {m.total_saleable_stock} units
                       </span>
                     </td>
-                    <td className="py-3 px-3 font-mono font-bold text-emerald-500">
-                      Rs. {Number(m.unit_price).toFixed(2)}
+                    <td className="py-3 px-3 font-mono">
+                      {m.is_offer && Number(m.discount_percent) > 0 ? (
+                        <div>
+                          <span className="font-black text-rose-500 block">
+                            Rs. {(Number(m.unit_price) * (1 - Number(m.discount_percent) / 100)).toFixed(2)}
+                          </span>
+                          <span className="text-[11px] text-slate-400 line-through block">
+                            Rs. {Number(m.unit_price).toFixed(2)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="font-bold text-emerald-500">
+                          Rs. {Number(m.unit_price).toFixed(2)}
+                        </span>
+                      )}
                     </td>
                     <td className="py-3 px-3">
                       {m.is_offer && Number(m.discount_percent) > 0 ? (
@@ -5040,7 +5157,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
               { id: 'bestsellers', label: 'Top-Selling Formulations', icon: Sparkles },
               { id: 'valuation', label: 'Inventory Valuation', icon: PieChart },
               { id: 'expiring', label: `Expired & Expiring Stock (${expiringList.length})`, icon: Clock },
-              { id: 'audit', label: `Inventory Audit Trail (${auditLogs.length})`, icon: History }
+              ...(isAdmin ? [{ id: 'audit', label: `Inventory Audit Trail (${auditLogs.length})`, icon: History }] : [])
             ].map((sub) => {
               const Icon = sub.icon;
               const isActive = reportSubTab === sub.id;
@@ -5438,12 +5555,13 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
             </div>
           )}
 
-          {/* SUB-TAB 4: INVENTORY AUDIT TRAIL */}
-          {reportSubTab === 'audit' && (
+          {/* SUB-TAB 4: INVENTORY AUDIT TRAIL (ADMIN ONLY) */}
+          {reportSubTab === 'audit' && isAdmin && (
             <div className="space-y-4 animate-in fade-in duration-150">
               <div className={`p-6 rounded-3xl border space-y-4 ${
                 isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
               }`}>
+                {/* Header & Stats Banner */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <h3 className={`text-base font-bold flex items-center gap-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>
@@ -5451,70 +5569,219 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                       Operational & Inventory Audit Trail
                     </h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                      Automated immutable record capturing every stock adjustment, shipment receipt, and counter dispensation
+                      Immutable database ledger capturing batch receipts, stock adjustments, status changes, and sales dispensations
                     </p>
                   </div>
-                  <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20 shrink-0">
-                    {auditLogs.length} logged events
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleRefreshAuditLogs()}
+                      disabled={auditRefreshing}
+                      className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                        isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200' : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+                      }`}
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 text-teal-500 ${auditRefreshing ? 'animate-spin' : ''}`} />
+                      Refresh Feed
+                    </button>
+                    <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20 shrink-0">
+                      {filteredAuditLogs.length} of {auditLogs.length} entries
+                    </span>
+                  </div>
                 </div>
 
-                <div className="overflow-x-auto">
+                {/* Filters & Search Toolbar */}
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800/80">
+                  {/* Module pills */}
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    <span className="text-[11px] font-bold text-slate-400 mr-1 flex items-center gap-1">
+                      <Filter className="w-3.5 h-3.5" /> Module:
+                    </span>
+                    {[
+                      { id: 'ALL', label: 'All Modules' },
+                      { id: 'medicine_batches', label: 'Inventory Lots' },
+                      { id: 'medicines', label: 'Formulary' },
+                      { id: 'sales', label: 'Sales & POS' }
+                    ].map(tab => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => {
+                          setAuditModuleFilter(tab.id);
+                          handleRefreshAuditLogs(tab.id, auditOperationFilter);
+                        }}
+                        className={`px-2.5 py-1 rounded-lg font-bold text-xs cursor-pointer transition-all ${
+                          auditModuleFilter === tab.id
+                            ? 'bg-teal-600 text-white shadow-xs'
+                            : isDark ? 'bg-slate-800/80 text-slate-400 hover:text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Operation pills & Search */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
+                      {['ALL', 'UPDATE', 'INSERT', 'DELETE'].map(op => (
+                        <button
+                          key={op}
+                          type="button"
+                          onClick={() => {
+                            setAuditOperationFilter(op);
+                            handleRefreshAuditLogs(auditModuleFilter, op);
+                          }}
+                          className={`px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold cursor-pointer transition-all ${
+                            auditOperationFilter === op
+                              ? op === 'INSERT' ? 'bg-emerald-500 text-white' :
+                                op === 'UPDATE' ? 'bg-sky-500 text-white' :
+                                op === 'DELETE' ? 'bg-rose-500 text-white' : 'bg-teal-600 text-white'
+                              : 'text-slate-500 hover:text-slate-800 dark:hover:text-white'
+                          }`}
+                        >
+                          {op}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="relative min-w-[200px]">
+                      <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={auditSearchQuery}
+                        onChange={(e) => setAuditSearchQuery(e.target.value)}
+                        placeholder="Search target, action, staff..."
+                        className={`w-full pl-8 pr-3 py-1.5 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                          isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                        }`}
+                      />
+                      {auditSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setAuditSearchQuery('')}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Table of Enriched Audit Logs */}
+                <div className="overflow-x-auto rounded-2xl border border-slate-100 dark:border-slate-800">
                   <table className="w-full text-left text-xs">
                     <thead className={`border-b uppercase tracking-wider text-[10px] font-bold ${
                       isDark ? 'bg-slate-950/60 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-600'
                     }`}>
                       <tr>
-                        <th className="py-2.5 px-3">Log ID</th>
+                        <th className="py-2.5 px-3">Log #</th>
                         <th className="py-2.5 px-3">Operation</th>
-                        <th className="py-2.5 px-3">Target Record</th>
-                        <th className="py-2.5 px-3">Prior Snapshot (Old State)</th>
-                        <th className="py-2.5 px-3">Applied Snapshot (New State)</th>
+                        <th className="py-2.5 px-3">Target Entity</th>
+                        <th className="py-2.5 px-3">Action & State Change</th>
+                        <th className="py-2.5 px-3">Stock Delta</th>
                         <th className="py-2.5 px-3">Authorized Staff / Source</th>
                         <th className="py-2.5 px-3">Timestamp</th>
+                        <th className="py-2.5 px-3 text-right">Details</th>
                       </tr>
                     </thead>
                     <tbody className={`divide-y text-xs ${
                       isDark ? 'divide-slate-800 text-slate-300' : 'divide-slate-200 text-slate-700'
                     }`}>
-                      {auditLogs.length === 0 ? (
+                      {filteredAuditLogs.length === 0 ? (
                         <tr>
-                          <td colSpan="7" className="py-6 text-center text-slate-500 italic">
-                            No audit trail entries found. Audit records will appear when batches are adjusted or dispensed.
+                          <td colSpan="8" className="py-8 text-center text-slate-500 italic">
+                            No audit trail entries matched the selected filters.
                           </td>
                         </tr>
                       ) : (
-                        auditLogs.map((log) => (
-                          <tr key={log.log_id} className="hover:bg-teal-500/5 transition-colors">
-                            <td className="py-2.5 px-3 font-mono text-slate-400 font-bold">#{log.log_id}</td>
-                            <td className="py-2.5 px-3">
-                              <span className={`px-2 py-0.5 rounded font-mono font-black text-[10px] ${
-                                log.operation === 'INSERT' ? 'bg-emerald-500/10 text-emerald-500' :
-                                log.operation === 'UPDATE' ? 'bg-sky-500/10 text-sky-500' :
-                                'bg-rose-500/10 text-rose-500'
-                              }`}>
-                                {log.operation}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-3 font-mono font-bold text-teal-600 dark:text-teal-400">
-                              {formatAuditRecord(log.table_name, log.record_id)}
-                            </td>
-                            <td className="py-2.5 px-3 max-w-xs">
-                              {renderAuditState(log.old_value)}
-                            </td>
-                            <td className="py-2.5 px-3 max-w-xs">
-                              {renderAuditState(log.new_value)}
-                            </td>
-                            <td className="py-2.5 px-3">
-                              <span className="font-mono text-[11px] text-slate-400">
-                                {formatAuditCaller(log.performed_by)}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap">
-                              {new Date(log.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                            </td>
-                          </tr>
-                        ))
+                        filteredAuditLogs.map((log) => {
+                          const delta = log.stock_diff != null ? Number(log.stock_diff) : null;
+
+                          return (
+                            <tr key={log.log_id} className="hover:bg-teal-500/5 transition-colors">
+                              <td className="py-2.5 px-3 font-mono text-slate-400 font-bold">
+                                #{log.log_id}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className={`px-2 py-0.5 rounded font-mono font-black text-[10px] inline-block ${
+                                  log.operation === 'INSERT' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' :
+                                  log.operation === 'UPDATE' ? 'bg-sky-500/10 text-sky-500 border border-sky-500/20' :
+                                  'bg-rose-500/10 text-rose-500 border border-rose-500/20'
+                                }`}>
+                                  {log.operation}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="font-bold text-slate-800 dark:text-slate-100 max-w-[200px] truncate" title={log.target_name}>
+                                  {log.target_name || `${log.table_name} #${log.record_id}`}
+                                </div>
+                                <div className="text-[10px] text-slate-400 font-mono">
+                                  {log.table_name} • ID {log.record_id}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="font-semibold text-slate-700 dark:text-slate-300">
+                                  {log.action_summary || `${log.operation} executed on ${log.table_name}`}
+                                </div>
+                                {log.old_status && log.new_status && log.old_status !== log.new_status && (
+                                  <div className="text-[10px] mt-0.5 flex items-center gap-1 font-mono text-amber-500">
+                                    <span>status: {log.old_status}</span>
+                                    <span>→</span>
+                                    <span className="font-bold">{log.new_status}</span>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                {delta !== null && !isNaN(delta) ? (
+                                  delta < 0 ? (
+                                    <span className="px-2 py-0.5 rounded font-mono font-bold text-[11px] bg-rose-500/10 text-rose-500 border border-rose-500/20">
+                                      {delta} units
+                                    </span>
+                                  ) : delta > 0 ? (
+                                    <span className="px-2 py-0.5 rounded font-mono font-bold text-[11px] bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                                      +{delta} units
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400 font-mono text-[11px]">0 units</span>
+                                  )
+                                ) : (
+                                  <span className="text-slate-400 text-[10px]">—</span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="font-mono text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                                  {log.performed_by || 'System Daemon'}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap text-[11px]">
+                                {new Date(log.timestamp).toLocaleString([], {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  second: '2-digit'
+                                })}
+                              </td>
+                              <td className="py-2.5 px-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedAuditLogForModal(log)}
+                                  className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors ${
+                                    isDark
+                                      ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-teal-400'
+                                      : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-teal-600'
+                                  }`}
+                                  title="Inspect Before / After Snapshot"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  Inspect
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -5667,7 +5934,299 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         </div>
       )}
 
-      {/* TAB 6: COMPLETE USER MANAGEMENT & ACCESS CONTROL (ADMIN ONLY) */}
+      {/* TAB: DEDICATED REGULATORY & INVENTORY AUDIT TRAIL (ADMIN ONLY) */}
+      {activeTab === 'audit' && (
+        isAdmin ? (
+          <div className="space-y-6 animate-in fade-in duration-150">
+            {/* Top Navigation & Hub Header */}
+            <div className={`p-6 rounded-3xl border flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+              isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
+            }`}>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-black uppercase tracking-wider bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
+                    Administrator Governance Only
+                  </span>
+                  <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                    MySQL 8.0 ADBMS Engine
+                  </span>
+                </div>
+                <h2 className={`text-xl font-black flex items-center gap-2.5 mt-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                  <History className="w-6 h-6 text-teal-500" />
+                  Regulatory & Inventory Audit Trail Ledger
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                  Cryptographically reliable and immutable transaction log automatically recorded by database triggers. Captures every physical medicine batch stock adjustment, shipment receipt, expiry update, and counter dispensation.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleExportReport()}
+                  className={`px-3.5 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 cursor-pointer transition-all ${
+                    isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200' : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+                  }`}
+                  title="Export audit records to CSV"
+                >
+                  <Download className="w-4 h-4 text-teal-500" />
+                  <span>Export CSV</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleRefreshAuditLogs()}
+                  disabled={auditRefreshing}
+                  className="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center gap-2 cursor-pointer shadow-md shadow-teal-600/20 transition-all"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${auditRefreshing ? 'animate-spin' : ''}`} />
+                  <span>Refresh Ledger</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Audit Feed Table Card */}
+            <div className={`p-6 rounded-3xl border space-y-4 ${
+              isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
+            }`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className={`text-base font-bold flex items-center gap-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                    <History className="w-4 h-4 text-emerald-500" />
+                    Operational & Inventory Audit Trail
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Immutable database ledger capturing batch receipts, stock adjustments, status changes, and sales dispensations
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleRefreshAuditLogs()}
+                    disabled={auditRefreshing}
+                    className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                      isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200' : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-teal-500 ${auditRefreshing ? 'animate-spin' : ''}`} />
+                    Refresh Feed
+                  </button>
+                  <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20 shrink-0">
+                    {filteredAuditLogs.length} of {auditLogs.length} entries
+                  </span>
+                </div>
+              </div>
+
+              {/* Filters & Search Toolbar */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800/80">
+                {/* Module pills */}
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="text-[11px] font-bold text-slate-400 mr-1 flex items-center gap-1">
+                    <Filter className="w-3.5 h-3.5" /> Module:
+                  </span>
+                  {[
+                    { id: 'ALL', label: 'All Modules' },
+                    { id: 'medicine_batches', label: 'Inventory Lots' },
+                    { id: 'medicines', label: 'Formulary' },
+                    { id: 'sales', label: 'Sales & POS' }
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => {
+                        setAuditModuleFilter(tab.id);
+                        handleRefreshAuditLogs(tab.id, auditOperationFilter);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg font-bold text-xs cursor-pointer transition-all ${
+                        auditModuleFilter === tab.id
+                          ? 'bg-teal-600 text-white shadow-xs'
+                          : isDark ? 'bg-slate-800/80 text-slate-400 hover:text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Operation pills & Search */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
+                    {['ALL', 'UPDATE', 'INSERT', 'DELETE'].map(op => (
+                      <button
+                        key={op}
+                        type="button"
+                        onClick={() => {
+                          setAuditOperationFilter(op);
+                          handleRefreshAuditLogs(auditModuleFilter, op);
+                        }}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold cursor-pointer transition-all ${
+                          auditOperationFilter === op
+                            ? op === 'INSERT' ? 'bg-emerald-500 text-white' :
+                              op === 'UPDATE' ? 'bg-sky-500 text-white' :
+                              op === 'DELETE' ? 'bg-rose-500 text-white' : 'bg-teal-600 text-white'
+                            : 'text-slate-500 hover:text-slate-800 dark:hover:text-white'
+                        }`}
+                      >
+                        {op}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="relative min-w-[200px]">
+                    <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={auditSearchQuery}
+                      onChange={(e) => setAuditSearchQuery(e.target.value)}
+                      placeholder="Search target, action, staff..."
+                      className={`w-full pl-8 pr-3 py-1.5 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                        isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                      }`}
+                    />
+                    {auditSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setAuditSearchQuery('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Table of Enriched Audit Logs */}
+              <div className="overflow-x-auto rounded-2xl border border-slate-100 dark:border-slate-800">
+                <table className="w-full text-left text-xs">
+                  <thead className={`border-b uppercase tracking-wider text-[10px] font-bold ${
+                    isDark ? 'bg-slate-950/60 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-600'
+                  }`}>
+                    <tr>
+                      <th className="py-2.5 px-3">Log #</th>
+                      <th className="py-2.5 px-3">Operation</th>
+                      <th className="py-2.5 px-3">Target Entity</th>
+                      <th className="py-2.5 px-3">Action & State Change</th>
+                      <th className="py-2.5 px-3">Stock Delta</th>
+                      <th className="py-2.5 px-3">Authorized Staff / Source</th>
+                      <th className="py-2.5 px-3">Timestamp</th>
+                      <th className="py-2.5 px-3 text-right">Details</th>
+                    </tr>
+                  </thead>
+                  <tbody className={`divide-y text-xs ${
+                    isDark ? 'divide-slate-800 text-slate-300' : 'divide-slate-200 text-slate-700'
+                  }`}>
+                    {filteredAuditLogs.length === 0 ? (
+                      <tr>
+                        <td colSpan="8" className="py-8 text-center text-slate-500 italic">
+                          No audit trail entries matched the selected filters.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredAuditLogs.map((log) => {
+                        const delta = log.stock_diff != null ? Number(log.stock_diff) : null;
+
+                        return (
+                          <tr key={log.log_id} className="hover:bg-teal-500/5 transition-colors">
+                            <td className="py-2.5 px-3 font-mono text-slate-400 font-bold">
+                              #{log.log_id}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span className={`px-2 py-0.5 rounded font-mono font-black text-[10px] inline-block ${
+                                log.operation === 'INSERT' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' :
+                                log.operation === 'UPDATE' ? 'bg-sky-500/10 text-sky-500 border border-sky-500/20' :
+                                'bg-rose-500/10 text-rose-500 border border-rose-500/20'
+                              }`}>
+                                {log.operation}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="font-bold text-slate-800 dark:text-slate-100 max-w-[200px] truncate" title={log.target_name}>
+                                {log.target_name || `${log.table_name} #${log.record_id}`}
+                              </div>
+                              <div className="text-[10px] text-slate-400 font-mono">
+                                {log.table_name} • ID {log.record_id}
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="font-semibold text-slate-700 dark:text-slate-300">
+                                {log.action_summary || `${log.operation} executed on ${log.table_name}`}
+                              </div>
+                              {log.old_status && log.new_status && log.old_status !== log.new_status && (
+                                <div className="text-[10px] mt-0.5 flex items-center gap-1 font-mono text-amber-500">
+                                  <span>status: {log.old_status}</span>
+                                  <span>→</span>
+                                  <span className="font-bold">{log.new_status}</span>
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              {delta !== null && !isNaN(delta) ? (
+                                delta < 0 ? (
+                                  <span className="px-2 py-0.5 rounded font-mono font-bold text-[11px] bg-rose-500/10 text-rose-500 border border-rose-500/20">
+                                    {delta} units
+                                  </span>
+                                ) : delta > 0 ? (
+                                  <span className="px-2 py-0.5 rounded font-mono font-bold text-[11px] bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                                    +{delta} units
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 font-mono text-[11px]">0 units</span>
+                                )
+                              ) : (
+                                <span className="text-slate-400 text-[10px]">—</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span className="font-mono text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                                {log.performed_by || 'System Daemon'}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap text-[11px]">
+                              {new Date(log.timestamp).toLocaleString([], {
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit'
+                              })}
+                            </td>
+                            <td className="py-2.5 px-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedAuditLogForModal(log)}
+                                className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors ${
+                                  isDark
+                                    ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-teal-400'
+                                    : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-teal-600'
+                                }`}
+                                title="Inspect Before / After Snapshot"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                Inspect
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="p-8 rounded-3xl border border-rose-500/20 bg-rose-500/5 text-center space-y-3">
+            <ShieldAlert className="w-12 h-12 text-rose-500 mx-auto" />
+            <h3 className="text-base font-bold text-rose-600 dark:text-rose-400">Access Denied: Administrator Required</h3>
+            <p className="text-xs text-slate-500 max-w-md mx-auto">
+              This operational audit trail is restricted to executive administrators.
+            </p>
+          </div>
+        )
+      )}
+
+      {/* TAB 7: COMPLETE USER MANAGEMENT & ACCESS CONTROL (ADMIN ONLY) */}
       {activeTab === 'users' && (
         isAdmin ? (
           <div className="space-y-6 animate-in fade-in duration-150">
@@ -9236,6 +9795,166 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* AUDIT LOG SNAPSHOT INSPECTOR MODAL */}
+      {selectedAuditLogForModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div
+            className={`w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-3xl border shadow-2xl p-5 sm:p-7 space-y-5 ${
+              isDark ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            {/* Modal Header */}
+            <div className="flex items-start justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono font-bold text-xs px-2.5 py-0.5 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20">
+                    Audit Log #{selectedAuditLogForModal.log_id}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded font-mono font-black text-xs ${
+                    selectedAuditLogForModal.operation === 'INSERT' ? 'bg-emerald-500/10 text-emerald-500' :
+                    selectedAuditLogForModal.operation === 'UPDATE' ? 'bg-sky-500/10 text-sky-500' :
+                    'bg-rose-500/10 text-rose-500'
+                  }`}>
+                    {selectedAuditLogForModal.operation}
+                  </span>
+                  <span className="text-xs font-mono text-slate-400">
+                    table: {selectedAuditLogForModal.table_name}
+                  </span>
+                </div>
+                <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                  {selectedAuditLogForModal.target_name || `${selectedAuditLogForModal.table_name} #${selectedAuditLogForModal.record_id}`}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {selectedAuditLogForModal.action_summary || 'Audit record snapshot captured by ADBMS transaction trigger'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedAuditLogForModal(null)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Close modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Metadata Summary Banner */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 text-xs">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Authorized Staff</span>
+                <span className="font-bold font-mono text-teal-600 dark:text-teal-400">
+                  {selectedAuditLogForModal.performed_by || 'System Trigger'}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Timestamp</span>
+                <span className="font-semibold text-slate-700 dark:text-slate-200">
+                  {new Date(selectedAuditLogForModal.timestamp).toLocaleString()}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Record ID</span>
+                <span className="font-mono font-bold text-slate-700 dark:text-slate-200">
+                  {selectedAuditLogForModal.record_id}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Stock Change</span>
+                <span className="font-mono font-bold">
+                  {selectedAuditLogForModal.stock_diff != null ? (
+                    Number(selectedAuditLogForModal.stock_diff) < 0 ? (
+                      <span className="text-rose-500">{selectedAuditLogForModal.stock_diff} units</span>
+                    ) : (
+                      <span className="text-emerald-500">+{selectedAuditLogForModal.stock_diff} units</span>
+                    )
+                  ) : (
+                    <span className="text-slate-400">N/A</span>
+                  )}
+                </span>
+              </div>
+            </div>
+
+            {/* Side-by-Side Snapshot Comparison */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Prior State (Old Value) */}
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40 space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-slate-400" />
+                    Prior State (OLD VALUE)
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-400">Before Commit</span>
+                </div>
+                {selectedAuditLogForModal.old_value ? (
+                  <pre className={`p-3 rounded-xl text-[11px] font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto ${
+                    isDark ? 'bg-slate-950 text-slate-300 border border-slate-800' : 'bg-white text-slate-700 border border-slate-200'
+                  }`}>
+                    {typeof selectedAuditLogForModal.old_value === 'object'
+                      ? JSON.stringify(selectedAuditLogForModal.old_value, null, 2)
+                      : (() => {
+                          try {
+                            return JSON.stringify(JSON.parse(selectedAuditLogForModal.old_value), null, 2);
+                          } catch (e) {
+                            return String(selectedAuditLogForModal.old_value);
+                          }
+                        })()
+                    }
+                  </pre>
+                ) : (
+                  <div className="py-8 text-center text-xs text-slate-400 italic">
+                    No prior state (Initial INSERT transaction)
+                  </div>
+                )}
+              </div>
+
+              {/* Applied State (New Value) */}
+              <div className="p-4 rounded-2xl border border-teal-500/20 dark:border-teal-500/30 bg-teal-500/5 space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-teal-500/20">
+                  <span className="text-xs font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-teal-500" />
+                    Applied State (NEW VALUE)
+                  </span>
+                  <span className="text-[10px] font-mono text-teal-500">After Commit</span>
+                </div>
+                {selectedAuditLogForModal.new_value ? (
+                  <pre className={`p-3 rounded-xl text-[11px] font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto ${
+                    isDark ? 'bg-slate-950 text-teal-300 border border-teal-900/40' : 'bg-white text-teal-800 border border-teal-200'
+                  }`}>
+                    {typeof selectedAuditLogForModal.new_value === 'object'
+                      ? JSON.stringify(selectedAuditLogForModal.new_value, null, 2)
+                      : (() => {
+                          try {
+                            return JSON.stringify(JSON.parse(selectedAuditLogForModal.new_value), null, 2);
+                          } catch (e) {
+                            return String(selectedAuditLogForModal.new_value);
+                          }
+                        })()
+                    }
+                  </pre>
+                ) : (
+                  <div className="py-8 text-center text-xs text-rose-400 italic">
+                    Record removed (DELETE transaction)
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setSelectedAuditLogForModal(null)}
+                className={`px-5 py-2 rounded-xl font-bold text-xs cursor-pointer transition-colors ${
+                  isDark ? 'bg-slate-800 text-slate-200 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                }`}
+              >
+                Close Inspector
+              </button>
+            </div>
           </div>
         </div>
       )}

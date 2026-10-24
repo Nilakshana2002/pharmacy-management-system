@@ -192,6 +192,17 @@ export const getAdminMedicines = async (req, res) => {
         m.side_effects,
         m.usage_instructions,
         m.unit_price,
+        m.unit_price AS original_price,
+        CASE 
+          WHEN m.is_offer = TRUE AND m.discount_percent > 0 
+          THEN ROUND(m.unit_price * (1.00 - (m.discount_percent / 100.00)), 2)
+          ELSE m.unit_price 
+        END AS final_price,
+        CASE 
+          WHEN m.is_offer = TRUE AND m.discount_percent > 0 
+          THEN ROUND(m.unit_price * (m.discount_percent / 100.00), 2)
+          ELSE 0.00 
+        END AS discount_amount,
         m.is_public_price,
         m.low_stock_threshold,
         m.is_active,
@@ -1158,25 +1169,103 @@ export const getExpiringBatchesReport = async (req, res) => {
  * GET /api/admin/audit-logs
  * Optional query: startDate, endDate
  */
+let auditRoutinesEnsured = false;
+async function ensureAuditRoutines() {
+  if (auditRoutinesEnsured) return;
+  try {
+    // Create or Replace ADBMS View: v_enriched_audit_feed
+    await pool.query(`
+      CREATE OR REPLACE VIEW v_enriched_audit_feed AS
+      SELECT 
+          a.log_id,
+          a.timestamp,
+          a.table_name,
+          a.operation,
+          a.record_id,
+          CASE 
+              WHEN a.table_name = 'medicine_batches' THEN 
+                  COALESCE(CONCAT(m.name, ' (Lot #', b.batch_number, ')'), CONCAT('Batch #', a.record_id))
+              WHEN a.table_name = 'medicines' THEN 
+                  COALESCE(m_direct.name, CONCAT('Medicine #', a.record_id))
+              ELSE CONCAT(a.table_name, ' #', a.record_id)
+          END AS target_name,
+          CAST(a.old_value->>'$.stock_quantity' AS SIGNED) AS old_stock,
+          CAST(a.new_value->>'$.stock_quantity' AS SIGNED) AS new_stock,
+          (CAST(a.new_value->>'$.stock_quantity' AS SIGNED) - CAST(a.old_value->>'$.stock_quantity' AS SIGNED)) AS stock_diff,
+          a.old_value->>'$.status' AS old_status,
+          a.new_value->>'$.status' AS new_status,
+          COALESCE(
+            CASE 
+              WHEN a.table_name = 'medicine_batches' AND a.operation = 'UPDATE' AND (a.old_value->>'$.stock_quantity' != a.new_value->>'$.stock_quantity')
+              THEN CONCAT('Stock changed: ', a.old_value->>'$.stock_quantity', ' → ', a.new_value->>'$.stock_quantity')
+              WHEN a.table_name = 'medicine_batches' AND a.operation = 'UPDATE' AND (a.old_value->>'$.status' != a.new_value->>'$.status')
+              THEN CONCAT('Status changed: ', a.old_value->>'$.status', ' → ', a.new_value->>'$.status')
+              ELSE CONCAT(a.operation, ' on ', a.table_name)
+            END,
+            CONCAT(a.operation, ' on ', a.table_name)
+          ) AS action_summary,
+          a.performed_by,
+          a.old_value,
+          a.new_value
+      FROM audit_logs a
+      LEFT JOIN medicine_batches b ON a.table_name = 'medicine_batches' AND a.record_id = b.batch_id
+      LEFT JOIN medicines m ON b.medicine_id = m.medicine_id
+      LEFT JOIN medicines m_direct ON a.table_name = 'medicines' AND a.record_id = m_direct.medicine_id
+    `);
+    auditRoutinesEnsured = true;
+  } catch (vErr) {
+    console.warn('[Audit View Setup Notice]:', vErr.message);
+  }
+}
+
+/**
+ * GET /api/admin/audit-logs
+ * Retrieves enriched audit activity trail via ADBMS view v_enriched_audit_feed
+ */
 export const getAuditLogs = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
-    let whereClauses = [];
-    let params = [];
+    const { module: mod, operation, startDate, endDate, limit } = req.query;
+    await ensureAuditRoutines();
 
-    if (startDate) {
-      whereClauses.push('timestamp >= ?');
-      params.push(`${startDate} 00:00:00`);
+    let rows = [];
+    try {
+      let whereClauses = [];
+      let params = [];
+
+      if (mod && mod !== 'ALL') {
+        whereClauses.push('table_name = ?');
+        params.push(mod);
+      }
+      if (operation && operation !== 'ALL') {
+        whereClauses.push('operation = ?');
+        params.push(operation);
+      }
+      if (startDate) {
+        whereClauses.push('timestamp >= ?');
+        params.push(`${startDate} 00:00:00`);
+      }
+      if (endDate) {
+        whereClauses.push('timestamp <= ?');
+        params.push(`${endDate} 23:59:59`);
+      }
+
+      const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+      const limitNum = parseInt(limit, 10) || 200;
+      params.push(limitNum);
+
+      const [viewRows] = await pool.query(
+        `SELECT * FROM v_enriched_audit_feed ${whereSql} ORDER BY timestamp DESC LIMIT ?`,
+        params
+      );
+      rows = viewRows;
+    } catch (viewError) {
+      // Safe fallback directly from audit_logs
+      const [rawRows] = await pool.query(
+        'SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 200'
+      );
+      rows = rawRows;
     }
-    if (endDate) {
-      whereClauses.push('timestamp <= ?');
-      params.push(`${endDate} 23:59:59`);
-    }
 
-    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-    const sql = `SELECT * FROM audit_logs ${whereSql} ORDER BY timestamp DESC LIMIT 200`;
-
-    const [rows] = await pool.query(sql, params);
     res.status(200).json({
       success: true,
       count: rows.length,
