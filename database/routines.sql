@@ -429,7 +429,7 @@ SELECT
     r.created_at
 FROM customer_reviews r
 LEFT JOIN medicines m ON r.medicine_id = m.medicine_id
-WHERE r.is_approved = TRUE;
+WHERE r.is_approved = TRUE AND r.rating BETWEEN 4 AND 5;
 
 
 -- 2.11 Customer Dispensation History View
@@ -481,6 +481,7 @@ CREATE VIEW v_prescription_fulfillment_pipeline AS
 SELECT 
     po.order_id,
     po.account_type,
+    po.customer_id,
     po.your_name AS patient_name,
     po.your_email,
     po.contact_no,
@@ -489,9 +490,32 @@ SELECT
     po.files_count,
     po.pharmacist_name,
     po.reviewed_at,
+    po.confirmation_message,
+    po.rejection_reason,
+    po.ready_time,
     po.created_at,
     TIMESTAMPDIFF(MINUTE, po.created_at, COALESCE(po.reviewed_at, NOW())) AS processing_minutes
 FROM prescription_orders po;
+
+
+-- 2.15 Patient Inquiries & Consultations View
+DROP VIEW IF EXISTS v_patient_inquiries;
+CREATE VIEW v_patient_inquiries AS
+SELECT 
+    i.inquiry_id,
+    i.reference_code,
+    i.customer_id,
+    i.name AS patient_name,
+    i.email AS patient_email,
+    i.phone,
+    i.medicine_query,
+    i.message,
+    i.status,
+    i.staff_notes,
+    i.responded_by,
+    i.responded_at,
+    i.created_at
+FROM inquiries i;
 
 
 -- 2.14 Pharmacist Dispensing Workload View

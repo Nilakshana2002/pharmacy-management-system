@@ -5,6 +5,8 @@ import {
   getAdminMedicines,
   createMedicine,
   updateMedicine,
+  uploadMedicineImage,
+  getMedicineLibraryImages,
   toggleMedicineOffer,
   getBatches,
   createBatch,
@@ -36,7 +38,9 @@ import {
   createBrand,
   updatePharmacySettings,
   getInquiries,
-  updateInquiryStatus
+  updateInquiryStatus,
+  respondToInquiry,
+  deleteInquiry
 } from '../controllers/adminController.js';
 
 const router = express.Router();
@@ -55,6 +59,8 @@ router.get('/sales/:id', requireRoles('ADMIN', 'PHARMACIST'), getSaleById);
 // 3. Medicine Formulary Management
 router.get('/medicines', getAdminMedicines);
 router.post('/medicines', requireRoles('ADMIN', 'PHARMACIST'), createMedicine);
+router.post('/medicines/upload-image', requireRoles('ADMIN', 'PHARMACIST'), uploadMedicineImage);
+router.get('/medicines/library-images', getMedicineLibraryImages);
 router.put('/medicines/:id', requireRoles('ADMIN', 'PHARMACIST'), updateMedicine);
 router.patch('/medicines/:id/offer', requireRoles('ADMIN', 'PHARMACIST'), toggleMedicineOffer);
 
@@ -101,6 +107,8 @@ router.put('/settings', requireRoles('ADMIN'), updatePharmacySettings);
 // 11. Customer Contact Inquiries (ADMIN & PHARMACIST)
 router.get('/inquiries', requireRoles('ADMIN', 'PHARMACIST'), getInquiries);
 router.patch('/inquiries/:id/status', requireRoles('ADMIN', 'PHARMACIST'), updateInquiryStatus);
+router.post('/inquiries/:id/respond', requireRoles('ADMIN', 'PHARMACIST'), respondToInquiry);
+router.delete('/inquiries/:id', requireRoles('ADMIN', 'PHARMACIST'), deleteInquiry);
 
 export default router;
 

@@ -18,9 +18,19 @@ const getCleanedLocalOrders = () => {
     const list = JSON.parse(raw);
     if (!Array.isArray(list)) return [];
     
-    // Filter out hardcoded test orders
-    const cleaned = list.filter(o => !PURGE_MOCK_IDS.includes(o.order_id));
-    if (cleaned.length !== list.length) {
+    // Filter out hardcoded test orders and sanitize invalid out-of-range customer_id
+    let hasChanges = false;
+    const cleaned = list
+      .filter(o => !PURGE_MOCK_IDS.includes(o.order_id))
+      .map(o => {
+        if (o.customer_id && Number(o.customer_id) > 2147483647) {
+          hasChanges = true;
+          return { ...o, customer_id: null };
+        }
+        return o;
+      });
+
+    if (hasChanges || cleaned.length !== list.length) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
     }
     return cleaned;

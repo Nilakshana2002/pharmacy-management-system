@@ -9,7 +9,8 @@ import {
   Download, CalendarRange, FileSpreadsheet, KeyRound, CheckSquare, Square,
   ShieldAlert, Trash2, RotateCcw, FileCheck, Ban, Eye, Info, Copy,
   Zap, Droplets, Tag, ShoppingBag, Banknote, CreditCard, Flame, Percent,
-  Users, UserCheck, UserX, Mail, Phone, MapPin, UserPlus
+  Users, UserCheck, UserX, Mail, Phone, MapPin, UserPlus,
+  MessageSquare, Send, Inbox, Reply, MailCheck, MessageCircle
 } from 'lucide-react';
 import { 
   getAdminDashboard, getAdminMedicines, getAdminBatches, 
@@ -20,12 +21,16 @@ import {
   getBestSellingReport, getInventoryValuationReport, getUsers,
   createUser, updateUser, toggleUserStatus, executeBatchAction,
   getAdminCustomers, createAdminCustomer, updateAdminCustomer,
-  toggleAdminCustomerStatus, deleteAdminCustomer
+  toggleAdminCustomerStatus, deleteAdminCustomer,
+  getAdminInquiries, updateAdminInquiryStatus, respondToAdminInquiry,
+  deleteAdminInquiry
 } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
 import PrescriptionOrdersManager from '../components/PrescriptionOrdersManager';
 import { getPrescriptionOrders, fetchPrescriptionOrdersFromApi } from '../utils/prescriptionOrdersService';
 import { getMedicineProductImage } from '../utils/pharmacyImages';
+import MedicineImageUploadField from '../components/MedicineImageUploadField';
+import { DOSAGE_AND_PACKAGING_GROUPS, ALL_DOSAGE_FORMS } from '../utils/dosageForms';
 
 export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsite }) {
   const { isDark } = useTheme();
@@ -59,6 +64,20 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   const [selectedSaleForInfo, setSelectedSaleForInfo] = useState(null);
   const [saleInfoLoading, setSaleInfoLoading] = useState(false);
   const [copiedInvoice, setCopiedInvoice] = useState(false);
+
+  // Customer Contact Inquiries & Consultation state
+  const [inquiries, setInquiries] = useState([]);
+  const [inquiriesLoading, setInquiriesLoading] = useState(false);
+  const [inquiryFilter, setInquiryFilter] = useState('ALL'); // 'ALL' | 'NEW' | 'IN_REVIEW' | 'RESOLVED'
+  const [inquirySearch, setInquirySearch] = useState('');
+  const [selectedInquiryForReply, setSelectedInquiryForReply] = useState(null);
+  const [replyText, setReplyText] = useState('');
+  const [replySubject, setReplySubject] = useState('');
+  const [replyStatus, setReplyStatus] = useState('RESOLVED');
+  const [replySending, setReplySending] = useState(false);
+  const [replyFeedback, setReplyFeedback] = useState(null);
+  const [statusUpdatingId, setStatusUpdatingId] = useState(null);
+  const [deletingInquiryId, setDeletingInquiryId] = useState(null);
 
   const handleOpenSaleInfo = async (sale) => {
     setSelectedSaleForInfo(sale);
@@ -143,8 +162,12 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   const [editMedForm, setEditMedForm] = useState({
     name: '', generic_name: '', brand_id: '', category_id: '',
     dosage_form: 'Tablet', strength: '', description: '', unit_price: '',
-    low_stock_threshold: 20, is_active: true, is_offer: false, discount_percent: 0
+    low_stock_threshold: 20, is_active: true, is_offer: false, discount_percent: 0,
+    image_url: ''
   });
+
+  const [isCustomDosageForm, setIsCustomDosageForm] = useState(false);
+  const [isEditCustomDosageForm, setIsEditCustomDosageForm] = useState(false);
 
   // Promotional Offer Allocation state
   const [isOfferModalOpen, setIsOfferModalOpen] = useState(false);
@@ -162,6 +185,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
       can_manage_medicines: false,
       can_manage_batches: false,
       can_view_reports: false,
+      can_manage_inquiries: false,
       can_view_audit: false
     }
   });
@@ -180,6 +204,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
       can_manage_medicines: false,
       can_manage_batches: false,
       can_view_reports: false,
+      can_manage_inquiries: false,
       can_view_audit: false
     }
   });
@@ -229,7 +254,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   const [medForm, setMedForm] = useState({
     name: '', generic_name: '', brand_id: '', category_id: '',
     dosage_form: 'Tablet', strength: '', description: '', unit_price: '',
-    is_public_price: true, low_stock_threshold: 20
+    is_public_price: true, low_stock_threshold: 20, image_url: ''
   });
 
   const [batchForm, setBatchForm] = useState({
@@ -281,14 +306,15 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         getBestSellingReport(),
         getInventoryValuationReport(),
         getUsers(),
-        getAdminCustomers()
+        getAdminCustomers(),
+        getAdminInquiries()
       ]);
 
       const [
         statsRes, medsRes, batchRes, lowRes, expRes, 
         logRes, supRes, catRes, brRes, salesRes, 
         dailyRes, monthRes, bestRes, valRes, usersRes,
-        customersRes
+        customersRes, inquiriesRes
       ] = results.map((r) => (r.status === 'fulfilled' ? r.value : null));
 
       if (statsRes?.success) setStats(statsRes.data);
@@ -307,6 +333,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
       if (valRes?.success) setValuation(valRes.data || null);
       if (usersRes?.success) setStaffUsers(usersRes.data || []);
       if (customersRes?.success) setCustomers(customersRes.data || []);
+      if (inquiriesRes?.success) setInquiries(inquiriesRes.data || []);
     } catch (err) {
       console.error('Error loading dashboard:', err);
     } finally {
@@ -314,8 +341,132 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
     }
   };
 
+  const fetchInquiries = async () => {
+    try {
+      setInquiriesLoading(true);
+      const res = await getAdminInquiries();
+      if (res?.success) {
+        setInquiries(res.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch inquiries:', err);
+    } finally {
+      setInquiriesLoading(false);
+    }
+  };
+
+  const handleOpenReplyModal = (inq) => {
+    setSelectedInquiryForReply(inq);
+    setReplySubject(`Response to Inquiry [${inq.reference_code}] - My Pharmacist Dispensary`);
+    setReplyText('');
+    setReplyStatus('RESOLVED');
+    setReplyFeedback(null);
+  };
+
+  const handleSendInquiryReply = async (e) => {
+    e.preventDefault();
+    if (!selectedInquiryForReply || !replyText.trim()) return;
+
+    setReplySending(true);
+    setReplyFeedback(null);
+    try {
+      const res = await respondToAdminInquiry(selectedInquiryForReply.inquiry_id, {
+        response_message: replyText.trim(),
+        subject: replySubject.trim(),
+        status: replyStatus
+      });
+
+      if (res?.success) {
+        setReplyFeedback({
+          type: 'success',
+          message: res.message || 'Response recorded and email successfully sent.'
+        });
+
+        // Update local state immediately
+        setInquiries(prev => prev.map(item => {
+          if (item.inquiry_id === selectedInquiryForReply.inquiry_id) {
+            return {
+              ...item,
+              status: replyStatus,
+              staff_notes: replyText.trim(),
+              responded_by: staffUser?.fullName || 'Pharmacist',
+              responded_at: new Date().toISOString()
+            };
+          }
+          return item;
+        }));
+
+        setTimeout(() => {
+          setSelectedInquiryForReply(null);
+          setReplyFeedback(null);
+        }, 1800);
+      } else {
+        setReplyFeedback({
+          type: 'error',
+          message: res?.message || 'Failed to dispatch email response.'
+        });
+      }
+    } catch (err) {
+      console.error('Inquiry reply error:', err);
+      setReplyFeedback({
+        type: 'error',
+        message: err.response?.data?.message || err.message || 'Error processing inquiry response.'
+      });
+    } finally {
+      setReplySending(false);
+    }
+  };
+
+  const handleQuickUpdateInquiryStatus = async (inquiryId, newStatus) => {
+    setStatusUpdatingId(inquiryId);
+    try {
+      const res = await updateAdminInquiryStatus(inquiryId, { status: newStatus });
+      if (res?.success) {
+        setInquiries(prev => prev.map(item => {
+          if (item.inquiry_id === inquiryId) {
+            return {
+              ...item,
+              status: newStatus,
+              responded_by: staffUser?.fullName || 'Pharmacist',
+              responded_at: new Date().toISOString()
+            };
+          }
+          return item;
+        }));
+      }
+    } catch (err) {
+      console.error('Quick status update error:', err);
+    } finally {
+      setStatusUpdatingId(null);
+    }
+  };
+
+  const handleDeleteInquiry = async (inq) => {
+    const refText = inq.reference_code ? ` [${inq.reference_code}]` : '';
+    const nameText = inq.name ? ` from "${inq.name}"` : '';
+    if (!window.confirm(`Are you sure you want to permanently delete this customer inquiry${refText}${nameText}? This action cannot be undone.`)) {
+      return;
+    }
+    setDeletingInquiryId(inq.inquiry_id);
+    try {
+      const res = await deleteAdminInquiry(inq.inquiry_id);
+      if (res?.success) {
+        setInquiries(prev => prev.filter(item => item.inquiry_id !== inq.inquiry_id));
+      } else {
+        alert(res?.message || 'Failed to delete inquiry');
+      }
+    } catch (err) {
+      console.error('Delete inquiry error:', err);
+      alert(err.response?.data?.message || 'Error deleting inquiry');
+    } finally {
+      setDeletingInquiryId(null);
+    }
+  };
+
   const handleOpenEditMedicine = (med) => {
     setSelectedMedForEdit(med);
+    const isCustom = med.dosage_form && !ALL_DOSAGE_FORMS.includes(med.dosage_form);
+    setIsEditCustomDosageForm(Boolean(isCustom));
     setEditMedForm({
       name: med.name || '',
       generic_name: med.generic_name || '',
@@ -328,7 +479,8 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
       low_stock_threshold: med.low_stock_threshold || 20,
       is_active: med.is_active !== undefined ? med.is_active : true,
       is_offer: Boolean(med.is_offer),
-      discount_percent: Number(med.discount_percent) || 0
+      discount_percent: Number(med.discount_percent) || 0,
+      image_url: med.image_url || ''
     });
     setIsEditMedModalOpen(true);
   };
@@ -345,7 +497,8 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         low_stock_threshold: parseInt(editMedForm.low_stock_threshold, 10) || 20,
         is_active: Boolean(editMedForm.is_active),
         is_offer: Boolean(editMedForm.is_offer),
-        discount_percent: editMedForm.is_offer ? (parseFloat(editMedForm.discount_percent) || 0) : 0
+        discount_percent: editMedForm.is_offer ? (parseFloat(editMedForm.discount_percent) || 0) : 0,
+        image_url: editMedForm.image_url !== undefined ? editMedForm.image_url : null
       });
       if (res.success) {
         setIsEditMedModalOpen(false);
@@ -423,6 +576,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
             can_manage_medicines: false,
             can_manage_batches: false,
             can_view_reports: false,
+            can_manage_inquiries: false,
             can_view_audit: false
           }
         });
@@ -614,6 +768,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         can_manage_medicines: user.role === 'ADMIN',
         can_manage_batches: user.role === 'ADMIN',
         can_view_reports: user.role === 'ADMIN',
+        can_manage_inquiries: user.role === 'ADMIN',
         can_view_audit: user.role === 'ADMIN',
         can_manage_users: user.role === 'ADMIN'
       }
@@ -801,20 +956,59 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         brand_id: parseInt(medForm.brand_id, 10),
         category_id: parseInt(medForm.category_id, 10),
         unit_price: parseFloat(medForm.unit_price) || 0,
-        low_stock_threshold: parseInt(medForm.low_stock_threshold, 10) || 20
+        low_stock_threshold: parseInt(medForm.low_stock_threshold, 10) || 20,
+        image_url: medForm.image_url ? medForm.image_url.trim() : null
       });
       if (res.success) {
         setIsNewMedModalOpen(false);
         setMedForm({
           name: '', generic_name: '', brand_id: '', category_id: '',
           dosage_form: 'Tablet', strength: '', description: '', unit_price: '',
-          is_public_price: true, low_stock_threshold: 20
+          is_public_price: true, low_stock_threshold: 20, image_url: ''
         });
         await loadDashboardData();
       }
     } catch (err) {
       alert(err.response?.data?.message || 'Error creating medicine formulation');
     }
+  };
+
+  const handleAutoGenerateBatchNumber = () => {
+    let prefix = 'LOT';
+    if (batchForm.medicine_id) {
+      const selectedMed = medicines.find(m => String(m.medicine_id) === String(batchForm.medicine_id));
+      if (selectedMed?.name) {
+        const cleanName = selectedMed.name.trim();
+        const words = cleanName.split(/[\s\-_]+/).filter(Boolean);
+        if (words.length > 1) {
+          prefix = words.map(w => w[0]).join('').replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
+        } else {
+          prefix = cleanName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
+        }
+      }
+    }
+    if (!prefix || prefix.length < 2) prefix = 'LOT';
+
+    let year = new Date().getFullYear();
+    if (batchForm.manufacture_date) {
+      const mfg = new Date(batchForm.manufacture_date);
+      if (!isNaN(mfg.getTime())) {
+        year = mfg.getFullYear();
+      }
+    }
+
+    let generatedBatch = '';
+    let attempts = 0;
+    const existingNumbers = new Set(batches.map(b => (b.batch_number || '').trim().toUpperCase()));
+
+    do {
+      const randLetter = String.fromCharCode(65 + Math.floor(Math.random() * 26));
+      const randDigits = Math.floor(1000 + Math.random() * 9000);
+      generatedBatch = `${prefix}-${year}-${randLetter}${randDigits}`;
+      attempts++;
+    } while (existingNumbers.has(generatedBatch) && attempts < 50);
+
+    setBatchForm(prev => ({ ...prev, batch_number: generatedBatch }));
   };
 
   const handleCreateBatch = async (e) => {
@@ -1576,13 +1770,19 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
     can_manage_batches: isAdmin,
     can_view_reports: isAdmin,
     can_view_audit: isAdmin,
-    can_manage_users: isAdmin
+    can_manage_users: isAdmin,
+    can_manage_inquiries: isAdmin
   };
+
+  const canEditInquiries = isAdmin || Boolean(userPerms.can_manage_inquiries);
+
+  const newInquiriesCount = inquiries.filter(i => i.status === 'NEW').length;
 
   // Navigation Tabs: Both Admins and Pharmacists have access to the e-POS Counter
   const navTabs = isAdmin ? [
     { id: 'overview', label: 'Executive Overview', icon: Layers, badge: null, show: true },
     { id: 'prescriptions', label: 'Prescription Orders', icon: FileCheck, badge: pendingRxCount > 0 ? `${pendingRxCount} New` : null, badgeColor: 'amber', show: true },
+    { id: 'inquiries', label: `Customer Inquiries (${inquiries.length})`, icon: MessageSquare, badge: newInquiriesCount > 0 ? `${newInquiriesCount} New` : null, badgeColor: 'amber', show: true },
     { id: 'pos', label: 'e-POS Counter', icon: ShoppingCart, badge: 'Live', show: true },
     { id: 'medicines', label: `Formulary Master (${medicines.length})`, icon: Package, badge: null, show: true },
     { id: 'batches', label: `Batch & Stock (${batches.length})`, icon: Clock, badge: totalExpiryAlertCount > 0 ? `${totalExpiryAlertCount}` : null, badgeColor: expiredWithStockCount > 0 ? 'rose' : 'amber', show: true },
@@ -1591,6 +1791,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   ] : [
     { id: 'overview', label: 'Dispensary Overview', icon: Activity, badge: null, show: true },
     { id: 'prescriptions', label: 'Prescription Orders', icon: FileCheck, badge: pendingRxCount > 0 ? `${pendingRxCount} New` : null, badgeColor: 'amber', show: true },
+    { id: 'inquiries', label: `Customer Inquiries (${inquiries.length})`, icon: MessageSquare, badge: newInquiriesCount > 0 ? `${newInquiriesCount} New` : null, badgeColor: 'amber', show: true },
     { id: 'pos', label: 'e-POS Counter', icon: ShoppingCart, badge: 'Live', show: userPerms.can_pos },
     { id: 'medicines', label: `Medicine Master (${medicines.length})`, icon: Package, badge: null, show: userPerms.can_manage_medicines },
     { id: 'batches', label: `Batch & Expiry (${batches.length})`, icon: Clock, badge: totalExpiryAlertCount > 0 ? `${totalExpiryAlertCount}` : null, badgeColor: expiredWithStockCount > 0 ? 'rose' : 'amber', show: userPerms.can_manage_batches },
@@ -1686,33 +1887,21 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         <div className="p-3 border-t border-slate-100 dark:border-slate-800/80 space-y-2">
           
           {/* Pharmacist Profile */}
-          <div className={`p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 flex items-center justify-between gap-2 ${
+          <div className={`p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 flex items-center gap-2.5 ${
             sidebarCollapsed ? 'justify-center' : ''
           }`}>
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-teal-600/10 text-teal-600 flex items-center justify-center font-black text-xs shrink-0">
-                {staffUser?.fullName ? staffUser.fullName[0].toUpperCase() : 'P'}
-              </div>
-              {!sidebarCollapsed && (
-                <div className="min-w-0">
-                  <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
-                    {staffUser?.fullName || 'Pharmacist'}
-                  </p>
-                  <p className="text-[10px] text-slate-400 capitalize">
-                    {staffUser?.role || 'Staff'} Mode
-                  </p>
-                </div>
-              )}
+            <div className="w-8 h-8 rounded-lg bg-teal-600/10 text-teal-600 flex items-center justify-center font-black text-xs shrink-0">
+              {staffUser?.fullName ? staffUser.fullName[0].toUpperCase() : 'P'}
             </div>
-
             {!sidebarCollapsed && (
-              <button
-                onClick={onLogout}
-                title="Sign out of dispensary session"
-                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-              </button>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
+                  {staffUser?.fullName || 'Pharmacist'}
+                </p>
+                <p className="text-[10px] text-slate-400 capitalize">
+                  {staffUser?.role || 'Staff'} Mode
+                </p>
+              </div>
             )}
           </div>
 
@@ -1858,6 +2047,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                 {isAdmin ? (
                   activeTab === 'overview' ? 'Executive Management & Financial Command' :
                   activeTab === 'prescriptions' ? 'Prescription Order Supervision & Validation' :
+                  activeTab === 'inquiries' ? 'Customer Inquiries & Patient Consultations' :
                   activeTab === 'medicines' ? 'Formulary Master & Catalog Governance' :
                   activeTab === 'batches' ? 'Batch Stock & Supplier Supply Chain' :
                   activeTab === 'reports' ? 'Operational Reports & Financial Analytics' :
@@ -1865,6 +2055,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                 ) : (
                   activeTab === 'overview' ? 'Dispensary Station & Prescription Queue' :
                   activeTab === 'prescriptions' ? 'Prescription Order Supervision & Counter Pickup Queue' :
+                  activeTab === 'inquiries' ? 'Customer Inquiries & Patient Consultation Portal' :
                   activeTab === 'pos' ? 'Prescription POS Counter & Bill Generator' :
                   activeTab === 'medicines' ? 'Medicine Formulary Reference' :
                   activeTab === 'batches' ? 'Batch Expiry & Lot Shelf Control' :
@@ -1942,16 +2133,47 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                 </button>
 
                 <button
-                  onClick={() => setIsNewMedModalOpen(true)}
-                  className="p-2 sm:px-3 sm:py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-50 transition-all flex items-center gap-1.5 cursor-pointer"
-                  title="Add New Medicine Formulation"
+                  onClick={() => setActiveTab('inquiries')}
+                  className={`px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                    activeTab === 'inquiries'
+                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                      : isDark
+                      ? 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                  title="View Customer Inquiries & Messages"
                 >
-                  <Package className="w-3.5 h-3.5" />
-                  <span className="hidden xl:inline">New Medicine</span>
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Inquiries</span>
+                  {newInquiriesCount > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-amber-400 text-slate-950 animate-pulse">
+                      {newInquiriesCount}
+                    </span>
+                  )}
                 </button>
               </>
             ) : (
               <>
+                <button
+                  onClick={() => setActiveTab('inquiries')}
+                  className={`px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                    activeTab === 'inquiries'
+                      ? 'bg-teal-700 text-white border-teal-700 shadow-sm'
+                      : isDark
+                      ? 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                  title="View Customer Inquiries & Messages"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Inquiries</span>
+                  {newInquiriesCount > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-amber-400 text-slate-950 animate-pulse">
+                      {newInquiriesCount}
+                    </span>
+                  )}
+                </button>
+
                 {userPerms.can_pos && (
                   <button
                     onClick={() => setActiveTab('pos')}
@@ -1966,30 +2188,18 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                     <span className="hidden sm:inline">POS Counter</span>
                   </button>
                 )}
-
-                {userPerms.can_manage_medicines && (
-                  <button
-                    onClick={() => setIsNewMedModalOpen(true)}
-                    className="p-2 sm:px-3 sm:py-2 rounded-xl text-xs font-bold border border-teal-200 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/60 text-teal-800 dark:text-teal-300 hover:bg-teal-100 transition-all flex items-center gap-1.5 cursor-pointer"
-                    title="Add New Medicine Formulation"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span className="hidden xl:inline">Add Medicine</span>
-                  </button>
-                )}
-
-                {userPerms.can_manage_batches && (
-                  <button
-                    onClick={() => setIsNewBatchModalOpen(true)}
-                    className="p-2 sm:px-3 sm:py-2 rounded-xl text-xs font-bold border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 transition-all flex items-center gap-1.5 cursor-pointer"
-                    title="Receive New Inventory Batch"
-                  >
-                    <Package className="w-3.5 h-3.5" />
-                    <span className="hidden xl:inline">Receive Batch</span>
-                  </button>
-                )}
               </>
             )}
+
+            {/* Dedicated Top Navigation Sign Out Button */}
+            <button
+              onClick={onLogout}
+              className="px-3 sm:px-3.5 py-2 rounded-xl text-xs font-bold border border-rose-200 dark:border-rose-900/60 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shrink-0"
+              title="Sign out of dispensary session"
+            >
+              <LogOut className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
+              <span className="font-bold">Sign Out</span>
+            </button>
           </div>
         </header>
 
@@ -4435,7 +4645,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
               </p>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 pr-2 sm:pr-4">
               <div className="relative">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
@@ -4451,7 +4661,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
 
               <button
                 onClick={() => setIsNewBatchModalOpen(true)}
-                className="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-teal-600/20 transition-all shrink-0"
+                className="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-teal-600/20 transition-all shrink-0 mr-2 sm:mr-3"
               >
                 <Plus className="w-3.5 h-3.5 stroke-[3]" />
                 Receive Batch
@@ -5604,6 +5814,11 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                                         Reports
                                       </span>
                                     )}
+                                    {u.permissions?.can_manage_inquiries && (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                        Inquiry Analyst
+                                      </span>
+                                    )}
                                     {u.permissions?.can_view_audit && (
                                       <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
                                         Audit Trail
@@ -5966,6 +6181,418 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         <PrescriptionOrdersManager staffUser={staffUser} />
       )}
 
+      {/* TAB 8: CUSTOMER INQUIRIES & ONLINE CONSULTATION MESSAGES */}
+      {activeTab === 'inquiries' && (
+        <div className="space-y-6 sm:space-y-8 animate-in fade-in duration-150">
+          {/* Header Banner */}
+          <div className={`p-6 sm:p-8 rounded-3xl border relative overflow-hidden ${
+            isDark 
+              ? 'bg-gradient-to-r from-slate-900 via-teal-950/40 to-slate-900 border-teal-500/20' 
+              : 'bg-gradient-to-r from-teal-900 via-teal-800 to-slate-900 text-white border-teal-800 shadow-lg'
+          }`}>
+            <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div className="space-y-2 max-w-2xl">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span>Website Contact & Patient Inquiries</span>
+                </div>
+                <h2 className="text-xl sm:text-2xl lg:text-3xl font-black tracking-tight text-white">
+                  Customer Inquiries & Consultations
+                </h2>
+                <p className="text-xs sm:text-sm text-teal-100/80 leading-relaxed">
+                  Real-time inbox of patient inquiries, medication availability checks, and prescription questions submitted through the online storefront. Review messages and reply directly to customer emails.
+                </p>
+              </div>
+
+              {/* Inquiries Counter Summary Pills */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 shrink-0">
+                <div className="p-3 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 text-center min-w-[90px]">
+                  <span className="text-[10px] font-bold text-teal-200 uppercase tracking-wider block">Total</span>
+                  <span className="text-xl font-black text-white">{inquiries.length}</span>
+                </div>
+                <div className="p-3 rounded-2xl bg-amber-500/20 backdrop-blur-md border border-amber-500/30 text-center min-w-[90px]">
+                  <span className="text-[10px] font-bold text-amber-200 uppercase tracking-wider block">New</span>
+                  <span className="text-xl font-black text-amber-300">
+                    {inquiries.filter(i => i.status === 'NEW').length}
+                  </span>
+                </div>
+                <div className="p-3 rounded-2xl bg-sky-500/20 backdrop-blur-md border border-sky-500/30 text-center min-w-[90px]">
+                  <span className="text-[10px] font-bold text-sky-200 uppercase tracking-wider block">In Review</span>
+                  <span className="text-xl font-black text-sky-300">
+                    {inquiries.filter(i => i.status === 'IN_REVIEW').length}
+                  </span>
+                </div>
+                <div className="p-3 rounded-2xl bg-emerald-500/20 backdrop-blur-md border border-emerald-500/30 text-center min-w-[90px]">
+                  <span className="text-[10px] font-bold text-emerald-200 uppercase tracking-wider block">Resolved</span>
+                  <span className="text-xl font-black text-emerald-300">
+                    {inquiries.filter(i => i.status === 'RESOLVED').length}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Read-Only Access Notice if user lacks Inquiry Analyst edit privileges */}
+          {!canEditInquiries && (
+            <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-3 text-xs text-amber-800 dark:text-amber-300">
+              <Shield className="w-4 h-4 text-amber-500 shrink-0" />
+              <span>
+                <strong>Read-Only Mode:</strong> You can view patient inquiries, but Inquiry Analyst edit privileges (status updates, customer replies, and inquiry deletion) have not been granted to this account. Contact an administrator to enable privileges.
+              </span>
+            </div>
+          )}
+
+          {/* Search, Filter Tabs & Refresh Bar */}
+          <div className={`p-4 rounded-2xl border flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 ${
+            isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
+          }`}>
+            {/* Status Filter Tabs */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
+              {[
+                { id: 'ALL', label: 'All Inquiries', count: inquiries.length },
+                { id: 'NEW', label: 'New / Awaiting', count: inquiries.filter(i => i.status === 'NEW').length, badgeColor: 'amber' },
+                { id: 'IN_REVIEW', label: 'In Review', count: inquiries.filter(i => i.status === 'IN_REVIEW').length, badgeColor: 'sky' },
+                { id: 'RESOLVED', label: 'Resolved', count: inquiries.filter(i => i.status === 'RESOLVED').length, badgeColor: 'emerald' }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setInquiryFilter(tab.id)}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
+                    inquiryFilter === tab.id
+                      ? 'bg-teal-600 text-white shadow-sm'
+                      : isDark
+                        ? 'text-slate-400 hover:text-white hover:bg-slate-800'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                    inquiryFilter === tab.id 
+                      ? 'bg-white/20 text-white' 
+                      : tab.badgeColor === 'amber'
+                        ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400'
+                        : isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'
+                  }`}>
+                    {tab.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {/* Search Input & Refresh Button */}
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1 sm:w-72">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={inquirySearch}
+                  onChange={(e) => setInquirySearch(e.target.value)}
+                  placeholder="Search name, email, ref, or topic..."
+                  className={`w-full pl-9 pr-3 py-2 rounded-xl text-xs border transition-colors outline-none ${
+                    isDark 
+                      ? 'bg-slate-950 border-slate-800 text-white placeholder-slate-500 focus:border-teal-500' 
+                      : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400 focus:border-teal-600'
+                  }`}
+                />
+              </div>
+
+              <button
+                onClick={fetchInquiries}
+                disabled={inquiriesLoading}
+                className="p-2 sm:px-3 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:bg-slate-50 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                title="Refresh customer inquiries"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${inquiriesLoading ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Inquiries Cards Grid / List */}
+          {inquiriesLoading ? (
+            <div className="py-20 text-center space-y-3">
+              <RefreshCw className="w-8 h-8 text-teal-500 animate-spin mx-auto" />
+              <p className="text-xs font-bold text-slate-400">Loading customer inquiries...</p>
+            </div>
+          ) : (() => {
+            const filteredInquiries = inquiries.filter(item => {
+              if (inquiryFilter !== 'ALL' && item.status !== inquiryFilter) return false;
+              if (inquirySearch.trim()) {
+                const q = inquirySearch.toLowerCase();
+                const matchName = item.name?.toLowerCase().includes(q);
+                const matchEmail = item.email?.toLowerCase().includes(q);
+                const matchPhone = item.phone?.toLowerCase().includes(q);
+                const matchRef = item.reference_code?.toLowerCase().includes(q);
+                const matchTopic = item.medicine_query?.toLowerCase().includes(q);
+                const matchMsg = item.message?.toLowerCase().includes(q);
+                return matchName || matchEmail || matchPhone || matchRef || matchTopic || matchMsg;
+              }
+              return true;
+            });
+
+            if (filteredInquiries.length === 0) {
+              return (
+                <div className={`p-12 rounded-3xl border text-center space-y-3 ${
+                  isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+                }`}>
+                  <Inbox className="w-12 h-12 text-slate-400 mx-auto stroke-[1.5]" />
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">No Inquiries Found</h3>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    {inquirySearch ? 'No inquiries matched your search criteria.' : 'No customer inquiries in this category.'}
+                  </p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="space-y-4">
+                {filteredInquiries.map((inq) => {
+                  const hasEmail = Boolean(inq.email && inq.email.includes('@'));
+                  const hasResponded = Boolean(inq.staff_notes);
+                  const isUpdating = statusUpdatingId === inq.inquiry_id;
+
+                  return (
+                    <div 
+                      key={inq.inquiry_id}
+                      className={`p-5 sm:p-6 rounded-3xl border transition-all space-y-4 ${
+                        inq.status === 'NEW' 
+                          ? isDark ? 'bg-slate-900/90 border-amber-500/30 shadow-md' : 'bg-white border-amber-200 shadow-sm'
+                          : isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200/90 shadow-xs'
+                      }`}
+                    >
+                      {/* Top Row: Reference, Date, Status */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3 border-slate-100 dark:border-slate-800">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-black px-2.5 py-1 rounded-lg bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20">
+                            {inq.reference_code}
+                          </span>
+                          <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {new Date(inq.created_at).toLocaleString(undefined, {
+                              year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                            })}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {inq.status === 'NEW' && (
+                            <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                              New / Awaiting Reply
+                            </span>
+                          )}
+                          {inq.status === 'IN_REVIEW' && (
+                            <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30 flex items-center gap-1">
+                              In Review
+                            </span>
+                          )}
+                          {inq.status === 'RESOLVED' && (
+                            <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              Resolved
+                            </span>
+                          )}
+
+                          {canEditInquiries && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteInquiry(inq)}
+                              disabled={deletingInquiryId === inq.inquiry_id}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer disabled:opacity-40"
+                              title="Delete this inquiry record"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Customer Info & Inquiry Topic */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {/* Customer Column */}
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                            Patient / Inquirer
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-lg bg-teal-600/10 text-teal-600 flex items-center justify-center font-bold text-xs shrink-0">
+                              {inq.name ? inq.name[0].toUpperCase() : 'C'}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                                {inq.name}
+                              </p>
+                              {inq.customer_id && (
+                                <span className="inline-block text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                                  Registered Patient #{inq.customer_id}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Contact Channels */}
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                            Contact Information
+                          </span>
+                          <div className="space-y-1 text-xs">
+                            {hasEmail ? (
+                              <a 
+                                href={`mailto:${inq.email}?subject=Re:%20Inquiry%20[${inq.reference_code}]`}
+                                className="flex items-center gap-1.5 text-teal-600 dark:text-teal-400 hover:underline truncate"
+                              >
+                                <Mail className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate">{inq.email}</span>
+                              </a>
+                            ) : (
+                              <span className="text-slate-400 flex items-center gap-1 text-[11px]">
+                                <Mail className="w-3.5 h-3.5 shrink-0" /> No email provided
+                              </span>
+                            )}
+                            {inq.phone && (
+                              <a 
+                                href={`tel:${inq.phone}`}
+                                className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 hover:text-teal-600 dark:hover:text-teal-400 truncate"
+                              >
+                                <Phone className="w-3.5 h-3.5 shrink-0" />
+                                <span>{inq.phone}</span>
+                              </a>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Medicine Subject / Topic */}
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                            Inquiry Topic / Medication
+                          </span>
+                          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
+                            <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
+                              {inq.medicine_query || 'General Consultation'}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Customer Inquiry Message Box */}
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                          Patient Question / Message
+                        </span>
+                        <div className={`p-4 rounded-2xl border text-xs sm:text-sm leading-relaxed ${
+                          isDark ? 'bg-slate-950/60 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-700'
+                        }`}>
+                          "{inq.message}"
+                        </div>
+                      </div>
+
+                      {/* Pharmacist Prior Response History (if any) */}
+                      {hasResponded && (
+                        <div className={`p-3.5 rounded-2xl border space-y-1.5 ${
+                          isDark ? 'bg-emerald-950/20 border-emerald-800/40' : 'bg-emerald-50/70 border-emerald-200'
+                        }`}>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              Staff Response by {inq.responded_by || 'Pharmacist'}:
+                            </span>
+                            {inq.responded_at && (
+                              <span className="text-slate-400 text-[10px]">
+                                {new Date(inq.responded_at).toLocaleString(undefined, {
+                                  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                                })}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-800 dark:text-slate-200 whitespace-pre-line leading-relaxed">
+                            {inq.staff_notes}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Action Bar */}
+                      <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800">
+                        {/* Status Quick Select */}
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-400 font-semibold">Status:</span>
+                          <select
+                            value={inq.status}
+                            disabled={!canEditInquiries || isUpdating}
+                            onChange={(e) => handleQuickUpdateInquiryStatus(inq.inquiry_id, e.target.value)}
+                            title={!canEditInquiries ? 'Inquiry Analyst edit privileges required' : 'Update status'}
+                            className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors outline-none cursor-pointer ${
+                              !canEditInquiries
+                                ? 'opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500'
+                                : isDark 
+                                  ? 'bg-slate-950 border-slate-800 text-slate-200' 
+                                  : 'bg-white border-slate-200 text-slate-700'
+                            }`}
+                          >
+                            <option value="NEW">New</option>
+                            <option value="IN_REVIEW">In Review</option>
+                            <option value="RESOLVED">Resolved</option>
+                          </select>
+                        </div>
+
+                        {/* Respond & Action Buttons */}
+                        <div className="flex items-center gap-2">
+                          {canEditInquiries && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteInquiry(inq)}
+                              disabled={deletingInquiryId === inq.inquiry_id}
+                              className="px-3 py-1.5 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 hover:border-rose-500/40 flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
+                              title={`Delete inquiry ${inq.reference_code}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>{deletingInquiryId === inq.inquiry_id ? 'Deleting...' : 'Delete'}</span>
+                            </button>
+                          )}
+
+                          {hasEmail && (
+                            <a
+                              href={`mailto:${inq.email}?subject=Re:%20[${inq.reference_code}]%20Dispensary%20Inquiry%20Response`}
+                              className="px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center gap-1.5 transition-colors"
+                              title="Open in your default mail app"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">Mail App</span>
+                            </a>
+                          )}
+
+                          <button
+                            onClick={() => canEditInquiries && handleOpenReplyModal(inq)}
+                            disabled={!canEditInquiries || !hasEmail}
+                            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-md ${
+                              !canEditInquiries
+                                ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed border border-slate-300/40 dark:border-slate-700/40'
+                                : hasEmail 
+                                  ? 'bg-teal-600 hover:bg-teal-500 text-white shadow-teal-600/20 cursor-pointer' 
+                                  : 'bg-slate-200 dark:bg-slate-800 text-slate-500 cursor-not-allowed'
+                            }`}
+                            title={
+                              !canEditInquiries
+                                ? 'Inquiry Analyst edit privileges required to reply'
+                                : hasEmail 
+                                  ? 'Send email response to customer' 
+                                  : 'Customer did not provide an email address'
+                            }
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            <span>{hasResponded ? 'Send Follow-up Email' : 'Reply to Customer Email'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
       {/* MODAL: SALE & INVOICE DETAILS BREAKDOWN */}
       {selectedSaleForInfo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-150">
@@ -6222,6 +6849,177 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         </div>
       )}
 
+      {/* MODAL: RESPOND TO CUSTOMER INQUIRY (SEND EMAIL) */}
+      {selectedInquiryForReply && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-150">
+          <div className={`border rounded-3xl p-5 sm:p-7 w-full max-w-2xl max-h-[92vh] overflow-y-auto my-auto space-y-5 shadow-2xl transition-all ${
+            isDark ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'
+          }`}>
+            {/* Modal Header */}
+            <div className="flex items-start justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0">
+                  <Send className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
+                    Send Email Response to Customer
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Dispatches an official dispensary clinical response via SMTP to the patient's inbox
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedInquiryForReply(null)}
+                className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Recipient & Inquiry Summary Card */}
+            <div className={`p-4 rounded-2xl border space-y-2 text-xs ${
+              isDark ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+            }`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Recipient</span>
+                  <span className="font-bold text-slate-900 dark:text-white">{selectedInquiryForReply.name}</span>
+                  <span className="text-teal-600 dark:text-teal-400 ml-1.5 font-mono">({selectedInquiryForReply.email})</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Reference Code</span>
+                  <span className="font-mono font-bold text-slate-700 dark:text-slate-300">{selectedInquiryForReply.reference_code}</span>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-800/80">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Original Inquiry:</span>
+                <p className="text-slate-600 dark:text-slate-300 italic mt-0.5">
+                  "{selectedInquiryForReply.message}"
+                </p>
+              </div>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleSendInquiryReply} className="space-y-4">
+              {/* Subject Input */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Email Subject
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={replySubject}
+                  onChange={(e) => setReplySubject(e.target.value)}
+                  className={`w-full px-3 py-2 rounded-xl text-xs border transition-colors outline-none ${
+                    isDark 
+                      ? 'bg-slate-950 border-slate-800 text-white focus:border-teal-500' 
+                      : 'bg-white border-slate-200 text-slate-900 focus:border-teal-600'
+                  }`}
+                />
+              </div>
+
+              {/* Quick Template Chips */}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                  Quick Response Templates:
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { label: 'Available in Stock', text: 'Hello! We are pleased to confirm that this medication is currently in stock at our dispensary counter and available for immediate pickup or delivery.' },
+                    { label: 'Out of Stock / Restocking', text: 'Thank you for reaching out. This medication is currently out of stock in our active lots. We anticipate receiving our next supply shipment within 2-3 business days.' },
+                    { label: 'Prescription Required', text: 'Please be advised that this medicine is a prescription-only pharmaceutical (Schedule IV/V). Kindly bring a valid physician prescription to our counter or upload it through the website.' }
+                  ].map((tpl, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setReplyText(tpl.text)}
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 transition-colors cursor-pointer"
+                    >
+                      + {tpl.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Response Message Textarea */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                  <span>Pharmacist / Clinical Response Message</span>
+                  <span className="text-[10px] text-slate-400 font-normal">Formatted as professional HTML email</span>
+                </label>
+                <textarea
+                  required
+                  rows={6}
+                  value={replyText}
+                  onChange={(e) => setReplyText(e.target.value)}
+                  placeholder="Type your professional response to the customer here..."
+                  className={`w-full px-3 py-2.5 rounded-xl text-xs border transition-colors outline-none leading-relaxed ${
+                    isDark 
+                      ? 'bg-slate-950 border-slate-800 text-white focus:border-teal-500' 
+                      : 'bg-white border-slate-200 text-slate-900 focus:border-teal-600'
+                  }`}
+                />
+              </div>
+
+              {/* Post-Response Status Update Selection */}
+              <div className="flex items-center justify-between gap-4 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 text-xs">
+                <div>
+                  <span className="font-bold text-slate-800 dark:text-slate-200 block">Status After Sending</span>
+                  <span className="text-[11px] text-slate-400">Mark inquiry status once email is dispatched</span>
+                </div>
+                <select
+                  value={replyStatus}
+                  onChange={(e) => setReplyStatus(e.target.value)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors outline-none cursor-pointer ${
+                    isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'
+                  }`}
+                >
+                  <option value="RESOLVED">Resolved (Recommended)</option>
+                  <option value="IN_REVIEW">Keep In Review</option>
+                </select>
+              </div>
+
+              {/* Feedback Alert */}
+              {replyFeedback && (
+                <div className={`p-3.5 rounded-2xl text-xs flex items-center gap-2 ${
+                  replyFeedback.type === 'success'
+                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
+                    : 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30'
+                }`}>
+                  {replyFeedback.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+                  <span>{replyFeedback.message}</span>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="pt-2 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setSelectedInquiryForReply(null)}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={replySending || !replyText.trim()}
+                  className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md shadow-teal-600/20"
+                >
+                  <Send className={`w-3.5 h-3.5 ${replySending ? 'animate-pulse' : ''}`} />
+                  <span>{replySending ? 'Dispatching Email...' : 'Send Email Response'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* MODAL 1: ADD NEW MEDICINE */}
       {isNewMedModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-150">
@@ -6314,17 +7112,55 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                 <div>
-                  <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Dosage Form *</label>
-                  <input
-                    type="text"
-                    required
-                    value={medForm.dosage_form}
-                    onChange={(e) => setMedForm({ ...medForm, dosage_form: e.target.value })}
-                    placeholder="Tablet / Syrup"
-                    className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
-                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
-                    }`}
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-slate-500 dark:text-slate-400 font-bold block">
+                      Dosage / Packaging Form *
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setIsCustomDosageForm(!isCustomDosageForm)}
+                      className="text-[10px] text-teal-600 dark:text-teal-400 font-bold hover:underline cursor-pointer"
+                    >
+                      {isCustomDosageForm ? '← Pick from list' : '+ Custom'}
+                    </button>
+                  </div>
+                  {isCustomDosageForm ? (
+                    <input
+                      type="text"
+                      required
+                      value={medForm.dosage_form}
+                      onChange={(e) => setMedForm({ ...medForm, dosage_form: e.target.value })}
+                      placeholder="e.g. Box of 50, 1 Liter, Packet..."
+                      className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                        isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                      }`}
+                    />
+                  ) : (
+                    <select
+                      required
+                      value={medForm.dosage_form}
+                      onChange={(e) => {
+                        if (e.target.value === '__CUSTOM__') {
+                          setIsCustomDosageForm(true);
+                        } else {
+                          setMedForm({ ...medForm, dosage_form: e.target.value });
+                        }
+                      }}
+                      className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 font-medium cursor-pointer ${
+                        isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                      }`}
+                    >
+                      <option value="">Select Dosage / Form</option>
+                      {DOSAGE_AND_PACKAGING_GROUPS.map((grp, gIdx) => (
+                        <optgroup key={gIdx} label={grp.category}>
+                          {grp.items.map((item, iIdx) => (
+                            <option key={iIdx} value={item}>{item}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                      <option value="__CUSTOM__">+ Other / Custom Form (Type manually)...</option>
+                    </select>
+                  )}
                 </div>
                 <div>
                   <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Strength *</label>
@@ -6380,6 +7216,15 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                   }`}
                 ></textarea>
               </div>
+
+              {/* Product Packaging Photo Upload Field */}
+              <MedicineImageUploadField
+                value={medForm.image_url}
+                onChange={(newUrl) => setMedForm({ ...medForm, image_url: newUrl })}
+                dosageForm={medForm.dosage_form}
+                medicineName={medForm.name}
+                isDark={isDark}
+              />
 
               <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
                 <button
@@ -6465,17 +7310,71 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
               </div>
 
               <div>
-                <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Batch / Lot Number *</label>
-                <input
-                  type="text"
-                  required
-                  value={batchForm.batch_number}
-                  onChange={(e) => setBatchForm({ ...batchForm, batch_number: e.target.value })}
-                  placeholder="e.g. AUG-2026-X1"
-                  className={`w-full p-2.5 sm:p-3 rounded-xl border font-mono text-xs focus:outline-none focus:border-teal-500 ${
-                    isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
-                  }`}
-                />
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-slate-500 dark:text-slate-400 font-bold block text-xs">
+                    Batch / Lot Number *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAutoGenerateBatchNumber}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-teal-500/10 hover:bg-teal-500 text-teal-600 hover:text-white dark:text-teal-400 dark:hover:text-white border border-teal-500/30 hover:border-teal-500 transition-all cursor-pointer shadow-2xs"
+                    title="Generate compliant batch number for new products without lot number"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Generate Batch #</span>
+                  </button>
+                </div>
+
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    value={batchForm.batch_number}
+                    onChange={(e) => setBatchForm({ ...batchForm, batch_number: e.target.value.toUpperCase() })}
+                    placeholder="e.g. AUG-2026-X1 (or click Generate Batch #)"
+                    className={`w-full p-2.5 sm:p-3 pr-28 rounded-xl border font-mono text-xs focus:outline-none focus:border-teal-500 ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAutoGenerateBatchNumber}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-teal-600 hover:bg-teal-500 text-white flex items-center gap-1 transition-all shadow-xs cursor-pointer"
+                    title="Generate internal batch number"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    <span>Generate</span>
+                  </button>
+                </div>
+
+                {/* Helper notice for new products without batch number */}
+                <div className="mt-1.5 p-2 rounded-xl bg-teal-50/70 dark:bg-teal-950/30 border border-teal-200/60 dark:border-teal-800/60 flex items-center justify-between text-[11px] gap-2">
+                  <div className="flex items-center gap-1.5 text-teal-800 dark:text-teal-300 min-w-0">
+                    <Sparkles className="w-3.5 h-3.5 text-teal-500 shrink-0" />
+                    <span className="truncate">
+                      <strong>New product without manufacturer lot?</strong> Auto-generate a compliant lot code.
+                    </span>
+                  </div>
+                  {batchForm.batch_number ? (
+                    <button
+                      type="button"
+                      onClick={handleAutoGenerateBatchNumber}
+                      className="text-[10px] font-bold text-teal-600 dark:text-teal-400 hover:underline shrink-0 flex items-center gap-1 cursor-pointer"
+                      title="Generate another unique lot number"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" />
+                      Regenerate
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleAutoGenerateBatchNumber}
+                      className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-600 text-white hover:bg-teal-500 shrink-0 cursor-pointer transition-colors"
+                    >
+                      Auto-Fill
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -6847,18 +7746,58 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                 <div>
-                  <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Dosage Form</label>
-                  <select
-                    value={editMedForm.dosage_form}
-                    onChange={(e) => setEditMedForm({ ...editMedForm, dosage_form: e.target.value })}
-                    className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 cursor-pointer ${
-                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
-                    }`}
-                  >
-                    {['Tablet', 'Capsule', 'Syrup', 'Suspension', 'Injection', 'Cream', 'Ointment', 'Inhaler', 'Drops'].map(df => (
-                      <option key={df} value={df}>{df}</option>
-                    ))}
-                  </select>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-slate-500 dark:text-slate-400 font-bold block">
+                      Dosage / Packaging Form *
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditCustomDosageForm(!isEditCustomDosageForm)}
+                      className="text-[10px] text-teal-600 dark:text-teal-400 font-bold hover:underline cursor-pointer"
+                    >
+                      {isEditCustomDosageForm ? '← Pick from list' : '+ Custom'}
+                    </button>
+                  </div>
+                  {isEditCustomDosageForm ? (
+                    <input
+                      type="text"
+                      required
+                      value={editMedForm.dosage_form}
+                      onChange={(e) => setEditMedForm({ ...editMedForm, dosage_form: e.target.value })}
+                      placeholder="e.g. Box of 100, 2 Liters, Packet..."
+                      className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 ${
+                        isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                      }`}
+                    />
+                  ) : (
+                    <select
+                      required
+                      value={editMedForm.dosage_form}
+                      onChange={(e) => {
+                        if (e.target.value === '__CUSTOM__') {
+                          setIsEditCustomDosageForm(true);
+                        } else {
+                          setEditMedForm({ ...editMedForm, dosage_form: e.target.value });
+                        }
+                      }}
+                      className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs focus:outline-none focus:border-teal-500 font-medium cursor-pointer ${
+                        isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                      }`}
+                    >
+                      <option value="">Select Dosage / Form</option>
+                      {DOSAGE_AND_PACKAGING_GROUPS.map((grp, gIdx) => (
+                        <optgroup key={gIdx} label={grp.category}>
+                          {grp.items.map((item, iIdx) => (
+                            <option key={iIdx} value={item}>{item}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                      {editMedForm.dosage_form && !ALL_DOSAGE_FORMS.includes(editMedForm.dosage_form) && (
+                        <option value={editMedForm.dosage_form}>{editMedForm.dosage_form} (Current Custom)</option>
+                      )}
+                      <option value="__CUSTOM__">+ Other / Custom Form (Type manually)...</option>
+                    </select>
+                  )}
                 </div>
                 <div>
                   <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1">Strength</label>
@@ -6978,6 +7917,15 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                   </div>
                 )}
               </div>
+
+              {/* Product Packaging Photo Field in Edit Modal */}
+              <MedicineImageUploadField
+                value={editMedForm.image_url}
+                onChange={(newUrl) => setEditMedForm({ ...editMedForm, image_url: newUrl })}
+                dosageForm={editMedForm.dosage_form}
+                medicineName={editMedForm.name}
+                isDark={isDark}
+              />
 
               <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
                 <button
@@ -7312,6 +8260,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                       { key: 'can_manage_medicines', label: 'Formulary Master Access', desc: 'Create and edit medicine catalog' },
                       { key: 'can_manage_batches', label: 'Batch Stock Management', desc: 'Receive shipments and adjust lot stock' },
                       { key: 'can_view_reports', label: 'Reports & Analytics', desc: 'View sales summaries and export reports' },
+                      { key: 'can_manage_inquiries', label: 'Inquiry Analyst Section', desc: 'Access and grant edit privileges for customer inquiries' },
                       { key: 'can_view_audit', label: 'System Audit Trail', desc: 'View inventory and operation audit history' },
                     ].map((perm) => (
                       <label key={perm.key} className="flex items-start gap-2.5 p-2 rounded-xl hover:bg-teal-500/5 cursor-pointer transition-colors">
@@ -7486,6 +8435,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                       { key: 'can_manage_medicines', title: 'Formulary Master', subtitle: 'Add & edit medicine records' },
                       { key: 'can_manage_batches', title: 'Batch & Stock Control', subtitle: 'Receive lots & adjust stock counts' },
                       { key: 'can_view_reports', title: 'Reports & Analytics', subtitle: 'Access sales analytics & CSV export' },
+                      { key: 'can_manage_inquiries', title: 'Inquiry Analyst Section', subtitle: 'Manage inquiries & grant edit privileges' },
                       { key: 'can_view_audit', title: 'System Audit Trail', subtitle: 'Inspect operation history & stock logs' },
                     ].map((p) => {
                       const isChecked = Boolean(editUserForm.permissions?.[p.key]);

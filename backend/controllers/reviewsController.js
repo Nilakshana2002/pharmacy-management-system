@@ -1,49 +1,11 @@
 import pool from '../config/db.js';
 
 /**
- * Ensure customer_reviews table exists with baseline verified patient feedback
+ * Reviews table and seed data are managed strictly in database/schema.sql and database/seed.sql
  */
 export async function ensureCustomerReviewsTable() {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS customer_reviews (
-        review_id INT AUTO_INCREMENT PRIMARY KEY,
-        customer_id INT NULL,
-        medicine_id INT NULL,
-        patient_name VARCHAR(150) NOT NULL,
-        role_title VARCHAR(100) DEFAULT 'Verified Patient',
-        rating INT NOT NULL,
-        comment TEXT NOT NULL,
-        category VARCHAR(100) DEFAULT 'General Healthcare',
-        is_verified BOOLEAN DEFAULT TRUE,
-        helpful_count INT DEFAULT 0,
-        is_approved BOOLEAN DEFAULT TRUE,
-        avatar_color VARCHAR(100) DEFAULT 'from-blue-600 to-indigo-600',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_reviews_approved (is_approved, created_at)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    const [rows] = await pool.query('SELECT COUNT(*) AS cnt FROM customer_reviews');
-    if (rows[0].cnt === 0) {
-      await pool.query(`
-        INSERT INTO customer_reviews (customer_id, medicine_id, patient_name, role_title, rating, comment, category, is_verified, helpful_count, is_approved, avatar_color) VALUES
-        (1, 1, 'Dr. Samantha Perera', 'Consultant Physician, Colombo', 5, 'VDC Store provides exceptional pharmacy dispensary services. The batch tracking, cold-chain insulin storage, and authentic Augmentin availability give me absolute confidence when directing my patients.', 'Prescription Verification', TRUE, 42, TRUE, 'from-blue-600 to-indigo-600'),
-        (2, 3, 'Mrs. Champa Wickramasinghe', 'Regular Monthly Patient', 5, 'Ordering Lipitor and Panadol Extra through digital prescription upload was seamless. The medicine arrived securely packed with batch numbers and clear dosage instructions in Sinhala and English.', 'Chronic Disease Care', TRUE, 29, TRUE, 'from-purple-600 to-pink-600'),
-        (3, 4, 'Mr. Roshan De Silva', 'Asthma Patient Caregiver', 5, 'Always have Ventolin Evohaler inhalers in stock when local pharmacies are depleted. Prompt courier delivery across Kandy within 24 hours of doctor review.', 'Emergency Inhaler Support', TRUE, 35, TRUE, 'from-emerald-600 to-teal-600'),
-        (4, 5, 'Ms. Dilani Jayawardena', 'Type 1 Diabetic Patient', 5, 'Insulin glargine (Lantus SoloStar) delivered in insulated cold-pack containers with unbroken seal. The pharmacist phoned personally to verify dosage units.', 'Cold-Chain Insulin Logistics', TRUE, 51, TRUE, 'from-amber-600 to-orange-600'),
-        (5, 7, 'Eng. Kusal Fernando', 'Wellness & Sports Enthusiast', 5, 'High quality Multivitamin formulations and authentic Omega-3 capsules. Professional digital invoices and friendly customer support hotline.', 'Wellness & Nutrition', TRUE, 18, TRUE, 'from-cyan-600 to-blue-600'),
-        (1, 6, 'Prof. Nalin Bandara', 'Cardiology Patient, Galle', 5, 'Prescription medicine was delivered exactly on schedule before my existing Concor tablets ran out. Reliable database tracking and very respectful staff.', 'Cardiovascular Care', TRUE, 24, TRUE, 'from-rose-600 to-red-600')
-      `);
-      console.log('[Reviews Service] Seeded default patient testimonials into MySQL');
-    }
-  } catch (err) {
-    console.warn('[Ensure Reviews Table Notice]:', err.message);
-  }
+  return true;
 }
-
-// Initialize on module load
-ensureCustomerReviewsTable();
 
 /**
  * GET /api/reviews
@@ -51,7 +13,6 @@ ensureCustomerReviewsTable();
  */
 export const getApprovedReviews = async (req, res) => {
   try {
-    await ensureCustomerReviewsTable();
     const sql = `
       SELECT 
         r.review_id,
@@ -69,7 +30,7 @@ export const getApprovedReviews = async (req, res) => {
         m.name AS medicine_name
       FROM customer_reviews r
       LEFT JOIN medicines m ON r.medicine_id = m.medicine_id
-      WHERE r.is_approved = TRUE
+      WHERE r.is_approved = TRUE AND r.rating BETWEEN 4 AND 5
       ORDER BY r.created_at DESC
       LIMIT 100
     `;
@@ -97,7 +58,6 @@ export const getApprovedReviews = async (req, res) => {
  */
 export const createReview = async (req, res) => {
   try {
-    await ensureCustomerReviewsTable();
     const {
       patient_name,
       rating,
@@ -177,7 +137,6 @@ export const createReview = async (req, res) => {
  */
 export const voteReviewHelpful = async (req, res) => {
   try {
-    await ensureCustomerReviewsTable();
     const reviewId = parseInt(req.params.id, 10);
 
     const [result] = await pool.query(`

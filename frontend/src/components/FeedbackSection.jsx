@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { 
   Star, MessageSquare, CheckCircle2, ThumbsUp, Plus, ShieldCheck, 
   Sparkles, User, Award, Heart, Send, X, ChevronLeft, ChevronRight,
-  Quote
+  Quote, Lock
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { getReviews, submitReview, voteReviewHelpful } from '../services/api';
+import { getCurrentCustomer } from '../utils/customerAuthService';
 
 const INITIAL_REVIEWS = [
   {
@@ -87,6 +88,9 @@ export default function FeedbackSection() {
   const [reviews, setReviews] = useState(INITIAL_REVIEWS);
   const [loading, setLoading] = useState(true);
 
+  // Track currently logged-in customer/patient account
+  const [currentCustomer, setCurrentCustomer] = useState(null);
+
   // Track the start index for side-by-side slides
   const [startIndex, setStartIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -98,14 +102,37 @@ export default function FeedbackSection() {
   const [newComment, setNewComment] = useState('');
   const [submittedToast, setSubmittedToast] = useState(false);
 
-  // Load reviews directly from MySQL customer_reviews table
+  // Synchronize authenticated customer profile (locks name field if signed in)
+  useEffect(() => {
+    const cust = getCurrentCustomer();
+    setCurrentCustomer(cust);
+    if (cust && cust.full_name) {
+      setNewName(cust.full_name);
+    }
+  }, [isModalOpen]);
+
+  useEffect(() => {
+    const handleAuthChange = (e) => {
+      const cust = e.detail !== undefined ? e.detail : getCurrentCustomer();
+      setCurrentCustomer(cust);
+      if (cust && cust.full_name) {
+        setNewName(cust.full_name);
+      }
+    };
+    window.addEventListener('pharmacy_customer_auth_change', handleAuthChange);
+    return () => window.removeEventListener('pharmacy_customer_auth_change', handleAuthChange);
+  }, []);
+
+  // Load reviews directly from MySQL customer_reviews table (filtered to 4-5 stars)
   useEffect(() => {
     async function loadDatabaseReviews() {
       try {
         setLoading(true);
         const res = await getReviews();
         if (res.success && res.data && res.data.length > 0) {
-          const mapped = res.data.map(r => ({
+          // Safeguard: Ensure only 4 and 5 star ratings are displayed
+          const highRatingReviews = res.data.filter(r => Number(r.rating) >= 4 && Number(r.rating) <= 5);
+          const mapped = highRatingReviews.map(r => ({
             id: r.review_id,
             name: r.patient_name,
             role: r.role_title || 'Verified Patient',
@@ -123,7 +150,11 @@ export default function FeedbackSection() {
         console.warn('[Reviews Service Notice] Using cached feedback as offline fallback:', err);
         try {
           const saved = localStorage.getItem('pharmacy_customer_feedback');
-          if (saved) setReviews(JSON.parse(saved));
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            const filteredSaved = parsed.filter(r => Number(r.rating) >= 4 && Number(r.rating) <= 5);
+            setReviews(filteredSaved);
+          }
         } catch (e) {}
       } finally {
         setLoading(false);
@@ -171,15 +202,18 @@ export default function FeedbackSection() {
 
   const handleAddReview = async (e) => {
     e.preventDefault();
-    if (!newName.trim() || !newComment.trim()) return;
+    const activeCustomer = currentCustomer || getCurrentCustomer();
+    const finalName = (activeCustomer?.full_name || newName).trim();
+    if (!finalName || !newComment.trim()) return;
 
     const payload = {
-      patient_name: newName.trim(),
-      role_title: 'Verified Patient',
+      customer_id: activeCustomer?.customer_id || null,
+      patient_name: finalName,
+      role_title: activeCustomer ? 'Verified Patient' : 'Customer Review',
       rating: newRating,
       category: newCategory,
       comment: newComment.trim(),
-      avatar_color: 'from-teal-600 to-cyan-600'
+      avatar_color: activeCustomer ? 'from-emerald-600 to-teal-600' : 'from-teal-600 to-cyan-600'
     };
 
     try {
@@ -197,7 +231,11 @@ export default function FeedbackSection() {
         helpful: 0,
         avatarColor: saved?.avatar_color || payload.avatar_color
       };
-      setReviews([newRev, ...reviews]);
+
+      // Only display on home page if rating is 4 or 5 stars
+      if (newRev.rating >= 4 && newRev.rating <= 5) {
+        setReviews(prev => [newRev, ...prev.filter(r => r.id !== newRev.id)]);
+      }
     } catch (err) {
       console.warn('Review saved to offline cache:', err);
       const offlineRev = {
@@ -212,12 +250,16 @@ export default function FeedbackSection() {
         helpful: 0,
         avatarColor: payload.avatar_color
       };
-      setReviews([offlineRev, ...reviews]);
+      if (offlineRev.rating >= 4 && offlineRev.rating <= 5) {
+        setReviews(prev => [offlineRev, ...prev]);
+      }
     }
 
     setStartIndex(0);
     setIsModalOpen(false);
-    setNewName('');
+    if (!activeCustomer) {
+      setNewName('');
+    }
     setNewComment('');
     setNewRating(5);
     setSubmittedToast(true);
@@ -426,17 +468,38 @@ export default function FeedbackSection() {
               </div>
 
               <div>
-                <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block mb-1">
-                  Your Name
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                    Your Name
+                  </label>
+                  {currentCustomer ? (
+                    <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
+                      <Lock className="w-3 h-3" />
+                      Profile Locked (Verified)
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400">Guest Reviewer</span>
+                  )}
+                </div>
                 <input
                   type="text"
                   required
                   value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
+                  readOnly={Boolean(currentCustomer)}
+                  disabled={Boolean(currentCustomer)}
+                  onChange={(e) => !currentCustomer && setNewName(e.target.value)}
                   placeholder="e.g. Priyantha Silva"
-                  className="w-full px-3 py-2 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-teal-600"
+                  className={`w-full px-3 py-2 rounded-xl text-xs border transition-all ${
+                    currentCustomer
+                      ? 'bg-slate-100 dark:bg-slate-800/80 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 cursor-not-allowed select-none font-semibold'
+                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-teal-600'
+                  }`}
                 />
+                {currentCustomer && (
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+                    Authenticated Patient Account: <span className="font-bold text-slate-600 dark:text-slate-300">{currentCustomer.email}</span>
+                  </p>
+                )}
               </div>
 
               <div>

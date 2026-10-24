@@ -2,55 +2,11 @@ import pool from '../config/db.js';
 import crypto from 'crypto';
 
 /**
- * Ensure inquiries and notification_logs tables exist
+ * Inquiries and notification_logs tables are managed via database/schema.sql
  */
 export async function ensureInquiriesTable() {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS inquiries (
-        inquiry_id INT AUTO_INCREMENT PRIMARY KEY,
-        reference_code VARCHAR(50) NOT NULL UNIQUE,
-        customer_id INT NULL,
-        name VARCHAR(150) NOT NULL,
-        phone VARCHAR(50),
-        email VARCHAR(150),
-        medicine_query VARCHAR(200),
-        message TEXT NOT NULL,
-        status ENUM('NEW', 'IN_REVIEW', 'RESOLVED') NOT NULL DEFAULT 'NEW',
-        staff_notes TEXT NULL,
-        responded_by VARCHAR(100) NULL,
-        responded_at DATETIME NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_inquiries_ref (reference_code),
-        INDEX idx_inquiries_status (status)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS notification_logs (
-        notification_id INT AUTO_INCREMENT PRIMARY KEY,
-        order_id VARCHAR(50) NULL,
-        customer_id INT NULL,
-        recipient_email VARCHAR(150) NOT NULL,
-        recipient_name VARCHAR(150),
-        subject VARCHAR(255) NOT NULL,
-        message_body TEXT NOT NULL,
-        notification_type ENUM('PRESCRIPTION_ACCEPTED', 'PRESCRIPTION_REJECTED', 'PRESCRIPTION_RECEIVED', 'INQUIRY_RECEIVED', 'PROMOTIONAL', 'SYSTEM') DEFAULT 'SYSTEM',
-        status ENUM('SENT', 'FAILED', 'PENDING') DEFAULT 'SENT',
-        error_message TEXT NULL,
-        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_notif_order (order_id),
-        INDEX idx_notif_status (status)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-  } catch (err) {
-    console.warn('[Ensure Inquiries Table Notice]:', err.message);
-  }
+  return true;
 }
-
-// Initialize on module load
-ensureInquiriesTable();
 
 /**
  * POST /api/inquiries
@@ -83,6 +39,13 @@ export const createInquiry = async (req, res) => {
     if (customer_id) {
       try {
         const [c] = await pool.query('SELECT customer_id FROM customers WHERE customer_id = ? LIMIT 1', [parseInt(customer_id, 10)]);
+        if (c.length > 0) validCustomerId = c[0].customer_id;
+      } catch (e) {}
+    }
+
+    if (!validCustomerId && email) {
+      try {
+        const [c] = await pool.query('SELECT customer_id FROM customers WHERE LOWER(TRIM(email)) = LOWER(TRIM(?)) LIMIT 1', [email.trim()]);
         if (c.length > 0) validCustomerId = c[0].customer_id;
       } catch (e) {}
     }

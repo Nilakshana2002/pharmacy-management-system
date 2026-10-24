@@ -346,14 +346,14 @@ export function getMedicineProductImage(medicine) {
   // 5. Automatic fallbacks based on dosage form
   const form = (medicine?.dosage_form || '').toLowerCase();
   if (form.includes('capsule')) return PHARMACY_IMAGES.dosageForms.capsule;
-  if (form.includes('syrup') || form.includes('suspension')) return PHARMACY_IMAGES.dosageForms.syrup;
+  if (form.includes('syrup') || form.includes('suspension') || form.includes('liquid') || form.includes('liter') || form.includes('bottle') || form.includes('solution')) return PHARMACY_IMAGES.dosageForms.syrup;
   if (form.includes('drop')) return PHARMACY_IMAGES.dosageForms.drops;
-  if (form.includes('inject') || form.includes('vial') || form.includes('pen')) return PHARMACY_IMAGES.dosageForms.injection;
-  if (form.includes('inhal') || form.includes('spray')) return PHARMACY_IMAGES.dosageForms.inhaler;
-  if (form.includes('cream') || form.includes('ointment') || form.includes('lotion')) return PHARMACY_IMAGES.dosageForms.cream;
-  if (form.includes('tablet')) return PHARMACY_IMAGES.dosageForms.tablet;
-  if (form.includes('device') || form.includes('equipment') || form.includes('monitor')) return PHARMACY_IMAGES.dosageForms.device;
-  if (form.includes('powder') || form.includes('supplement')) return PHARMACY_IMAGES.dosageForms.supplement;
+  if (form.includes('inject') || form.includes('vial') || form.includes('pen') || form.includes('ampoule') || form.includes('infusion')) return PHARMACY_IMAGES.dosageForms.injection;
+  if (form.includes('inhal') || form.includes('spray') || form.includes('respule')) return PHARMACY_IMAGES.dosageForms.inhaler;
+  if (form.includes('cream') || form.includes('ointment') || form.includes('lotion') || form.includes('gel') || form.includes('balm') || form.includes('tube')) return PHARMACY_IMAGES.dosageForms.cream;
+  if (form.includes('tablet') || form.includes('caplet') || form.includes('lozenge') || form.includes('troche') || form.includes('box') || form.includes('pack') || form.includes('strip') || form.includes('card')) return PHARMACY_IMAGES.dosageForms.tablet;
+  if (form.includes('device') || form.includes('equipment') || form.includes('monitor') || form.includes('strips') || form.includes('mask')) return PHARMACY_IMAGES.dosageForms.device;
+  if (form.includes('powder') || form.includes('supplement') || form.includes('granule') || form.includes('sachet')) return PHARMACY_IMAGES.dosageForms.supplement;
 
   // 6. Category fallback
   if (medicine?.category_id && PHARMACY_IMAGES.categories[medicine.category_id]) {

@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash VARCHAR(255) NOT NULL,
     role ENUM('ADMIN', 'PHARMACIST') NOT NULL DEFAULT 'PHARMACIST',
     full_name VARCHAR(100) NOT NULL,
+    permissions TEXT NULL,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
@@ -829,7 +830,7 @@ SELECT
     r.created_at
 FROM customer_reviews r
 LEFT JOIN medicines m ON r.medicine_id = m.medicine_id
-WHERE r.is_approved = TRUE
+WHERE r.is_approved = TRUE AND r.rating BETWEEN 4 AND 5
 ORDER BY r.created_at DESC;
 
 -- View 11: Customer Purchase History
@@ -2042,6 +2043,13 @@ INSERT INTO prescription_orders (
  1, 'Monthly chronic medication refill for Hypertension and Diabetes.', 'accepted', 
  'Licensed Staff Pharmacist', NOW(), 'Prescription validated by supervising pharmacist. Please bring your original SLMC doctor prescription for counter stamp verification.',
  NULL, 'Today after 4:00 PM', 1, NOW()),
+
+('RX-2026-8911', 'registered', 1, 'Kasun Perera', 'kasun.perera@gmail.com', 
+ 'Kasun Perera', '38', '+94 77 123 4567', 'Doorstep Courier Delivery (Flat Rs. 350)',
+ 1, 'Antibiotic prescription refill for Amoxicillin capsules.', 'rejected', 
+ 'Supervising Clinical Pharmacist', NOW(), NULL,
+ 'Doctor license seal and date of prescription are illegible or missing. SLMC regulations require an authorized physical seal for scheduled antibiotics.',
+ NULL, 1, NOW()),
 
 ('RX-2026-8908', 'registered', 2, 'Mrs. Champa Wickramasinghe', 'champa.w@gmail.com', 
  'Mrs. Champa Wickramasinghe', '58', '+94 71 987 6543', 'Doorstep Courier Delivery (Flat Rs. 350)',
