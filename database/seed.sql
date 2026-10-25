@@ -418,26 +418,7 @@ INSERT INTO customers (customer_id, full_name, email, password_hash, contact_no,
 ON DUPLICATE KEY UPDATE full_name = VALUES(full_name);
 
 -- ------------------------------------------------------------
--- 9. SEED PHARMACY SETTINGS (Public & Internal)
--- ------------------------------------------------------------
-INSERT INTO pharmacy_settings (setting_key, setting_value, description, is_public) VALUES
-('store_name', 'My Pharmacist / VDC Store Pharmacy', 'Official legal pharmacy name', TRUE),
-('tagline', 'Your Trusted Community Healthcare & Medicine Information Partner', 'Pharmacy branding slogan', TRUE),
-('phone_primary', '+94 11 234 5678', 'Main dispensary telephone helpline', TRUE),
-('phone_hotline', '+94 77 123 4567', '24/7 Pharmacist emergency inquiry hotline', TRUE),
-('email', 'info@vdcstore.lk', 'General inquiries email address', TRUE),
-('address_street', '124 Galle Road, Bambalapitiya', 'Physical premises address', TRUE),
-('address_city', 'Colombo 04, Sri Lanka', 'City and district', TRUE),
-('hours_weekday', '8:00 AM – 10:00 PM', 'Monday to Friday opening schedule', TRUE),
-('hours_saturday', '8:30 AM – 9:00 PM', 'Saturday opening schedule', TRUE),
-('hours_sunday', '9:00 AM – 6:00 PM', 'Sunday and Poya day opening schedule', TRUE),
-('announcement', 'Welcome to My Pharmacist. Licensed dispensary with cold-chain verified pharmaceutical stock.', 'Public alert banner', TRUE),
-('default_low_stock_threshold', '20', 'Internal stock alarm trigger level', FALSE),
-('system_version', '2.0.0-ADBMS', 'Software release identification', FALSE)
-ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value);
-
--- ------------------------------------------------------------
--- 10. SEED PURCHASES & PURCHASE ITEMS
+-- 9. SEED PURCHASES & PURCHASE ITEMS
 -- ------------------------------------------------------------
 INSERT INTO purchases (purchase_id, supplier_id, invoice_number, purchase_date, total_amount, status, received_by, notes) VALUES
 (1, 1, 'PO-2026-001', DATE_SUB(CURDATE(), INTERVAL 14 DAY), 45000.00, 'RECEIVED', 'Chief Administrator', 'Quarterly antibiotic restock'),
@@ -493,16 +474,7 @@ INSERT INTO payments (payment_id, sale_id, payment_method, amount_paid, change_g
 ON DUPLICATE KEY UPDATE amount_paid = VALUES(amount_paid);
 
 -- ------------------------------------------------------------
--- 12. SEED PROMOTIONS / COUPONS (Replacing Hardcoded JS Array)
--- ------------------------------------------------------------
-INSERT INTO promotions (promotion_id, code, title, description, discount_type, discount_value, min_order_amount, badge, category, tag, is_active, valid_from, valid_until) VALUES
-(1, 'IMMUNE15', 'Immune & Wellness Pack', 'Get 15% off high-potency Vitamin C, Zinc, and Multivitamin combinations this season.', 'PERCENT', 15.00, 1000.00, '15% OFF', 'Vitamins & Supplements', 'Trending Health Deal', TRUE, '2025-01-01', '2028-12-31'),
-(2, 'CARE50', 'Senior Citizen Chronic Care Delivery', 'Free dispensary doorstep courier service for monthly diabetes and blood pressure prescription refills.', 'FREE_DELIVERY', 0.00, 2500.00, 'FREE DELIVERY', 'Prescription Services', 'Dispensary Special', TRUE, '2025-01-01', '2028-12-31'),
-(3, 'HYGIENE20', 'Personal Care & Hygiene Essentials', 'Special bundle discounts on medical-grade antiseptic washes, masks, and sanitizers.', 'PERCENT', 20.00, 1500.00, 'FLAT 20% OFF', 'Personal Care', 'Counter Clearance', TRUE, '2025-01-01', '2028-12-31')
-ON DUPLICATE KEY UPDATE code = VALUES(code), discount_value = VALUES(discount_value);
-
--- ------------------------------------------------------------
--- 13. SEED CUSTOMER REVIEWS (Replacing Browser localStorage)
+-- 12. SEED CUSTOMER REVIEWS (Replacing Browser localStorage)
 -- ------------------------------------------------------------
 INSERT INTO customer_reviews (review_id, customer_id, medicine_id, patient_name, role_title, rating, comment, category, is_verified, helpful_count, is_approved, avatar_color) VALUES
 (1, 3, 9, 'Dr. Senaka Wickramasinghe', 'Consultant Physician', 5, 

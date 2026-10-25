@@ -535,8 +535,8 @@ export const dispensePrescriptionOrder = async (req, res) => {
         // Record payment
         await pool.query(`
           INSERT INTO payments (sale_id, payment_method, amount_paid, change_given, reference_note, payment_date)
-          VALUES (?, 'ONLINE', ?, 0.00, ?, CURRENT_TIMESTAMP)
-        `, [saleId, saleAmount, `Online Prescription Order ${orderId}`]);
+          VALUES (?, 'CARD', ?, 0.00, ?, CURRENT_TIMESTAMP)
+        `, [saleId, saleAmount, `Online Prescription Order (Card Settlement) ${orderId}`]);
 
         // Record line item
         const [medRows] = await pool.query('SELECT medicine_id, unit_price FROM medicines WHERE is_active = TRUE LIMIT 1');

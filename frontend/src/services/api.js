@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { PHARMACY_INFO } from '../config/pharmacyInfo';
 
 // Base API client
 const api = axios.create({
@@ -50,8 +51,22 @@ export const getBrands = async () => {
 };
 
 export const getPublicSettings = async () => {
-  const response = await api.get('/settings/public');
-  return response.data;
+  return {
+    success: true,
+    data: {
+      store_name: PHARMACY_INFO.name,
+      tagline: PHARMACY_INFO.tagline,
+      phone_primary: PHARMACY_INFO.phones.primary,
+      phone_hotline: PHARMACY_INFO.phones.hotline,
+      email: PHARMACY_INFO.email.general,
+      address_street: PHARMACY_INFO.address.street,
+      address_city: PHARMACY_INFO.address.city,
+      hours_weekday: PHARMACY_INFO.hours.weekdays,
+      hours_saturday: PHARMACY_INFO.hours.saturday,
+      hours_sunday: PHARMACY_INFO.hours.sundayHolidays,
+      announcement: PHARMACY_INFO.announcements.banner
+    }
+  };
 };
 
 // Staff & Admin Authentication API Methods
@@ -123,6 +138,16 @@ export const executeBatchAction = async (id, data) => {
 
 export const getSuppliers = async () => {
   const response = await api.get('/admin/suppliers');
+  return response.data;
+};
+
+export const getSupplierPerformance = async () => {
+  const response = await api.get('/admin/supplier-performance');
+  return response.data;
+};
+
+export const getPurchases = async () => {
+  const response = await api.get('/admin/purchases');
   return response.data;
 };
 
@@ -251,16 +276,9 @@ export const updatePharmacySettings = async (data) => {
   return response.data;
 };
 
-// Promotions & Voucher Codes (MySQL-backed)
-export const getPromotions = async () => {
-  const response = await api.get('/promotions');
-  return response.data;
-};
-
-export const validatePromotion = async (code, order_amount) => {
-  const response = await api.post('/promotions/validate', { code, order_amount });
-  return response.data;
-};
+// Promotions & Voucher Codes (Disabled)
+export const getPromotions = async () => ({ success: true, count: 0, data: [] });
+export const validatePromotion = async () => ({ success: false, message: 'Promotions feature disabled.' });
 
 // Customer Reviews & Feedback (MySQL-backed)
 export const getReviews = async () => {

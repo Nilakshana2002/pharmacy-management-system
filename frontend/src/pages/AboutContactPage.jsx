@@ -4,21 +4,20 @@ import {
   Send, CheckCircle2, MessageSquare, AlertCircle, HeartHandshake,
   Stethoscope, Award, ThermometerSnowflake, FileCheck, Check
 } from 'lucide-react';
-import { getPublicSettings, submitInquiry } from '../services/api';
+import { submitInquiry } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
 import { PHARMACY_IMAGES } from '../utils/pharmacyImages';
 import { getCurrentCustomer } from '../utils/customerAuthService';
+import { PHARMACY_INFO } from '../config/pharmacyInfo';
 
 export default function AboutContactPage({ initialFocus = 'about' }) {
   const { isDark } = useTheme();
-  const [settings, setSettings] = useState({});
   const [formData, setFormData] = useState({ name: '', phone: '', email: '', medicineQuery: '', message: '' });
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [inquiryRef, setInquiryRef] = useState('');
 
   useEffect(() => {
-    loadSettings();
     const currentCust = getCurrentCustomer();
     if (currentCust) {
       setFormData(prev => ({
@@ -29,30 +28,6 @@ export default function AboutContactPage({ initialFocus = 'about' }) {
       }));
     }
   }, []);
-
-  useEffect(() => {
-    if (initialFocus === 'contact') {
-      const el = document.getElementById('contact-section');
-      if (el) {
-        setTimeout(() => {
-          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          const nameInput = document.getElementById('contact-name-input');
-          if (nameInput) nameInput.focus();
-        }, 150);
-      }
-    }
-  }, [initialFocus]);
-
-  const loadSettings = async () => {
-    try {
-      const res = await getPublicSettings();
-      if (res.success) {
-        setSettings(res.data);
-      }
-    } catch (err) {
-      console.error('Failed to load settings:', err);
-    }
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -147,8 +122,8 @@ export default function AboutContactPage({ initialFocus = 'about' }) {
                 <div>
                   <span className="font-bold block text-slate-900 dark:text-white">Physical Pharmacy Address:</span>
                   <p className="mt-0.5 text-slate-600 dark:text-slate-400 leading-relaxed">
-                    {settings.address_street || '124 Galle Road, Bambalapitiya'},<br />
-                    {settings.address_city || 'Colombo 04, Sri Lanka'}
+                    {PHARMACY_INFO.address.street},<br />
+                    {PHARMACY_INFO.address.city}, {PHARMACY_INFO.address.country}
                   </p>
                 </div>
               </div>
@@ -160,14 +135,14 @@ export default function AboutContactPage({ initialFocus = 'about' }) {
                   <div className="mt-1 space-y-1 text-slate-600 dark:text-slate-400">
                     <div>
                       Dispensary Desk:{' '}
-                      <a href={`tel:${settings.phone_primary || '+94112345678'}`} className="font-bold text-teal-700 dark:text-teal-400 hover:underline">
-                        {settings.phone_primary || '+94 11 234 5678'}
+                      <a href={`tel:${PHARMACY_INFO.phones.primaryRaw}`} className="font-bold text-teal-700 dark:text-teal-400 hover:underline">
+                        {PHARMACY_INFO.phones.primary}
                       </a>
                     </div>
                     <div>
-                      24/7 Prescription Hotline:{' '}
-                      <a href={`tel:${settings.phone_hotline || '+94771234567'}`} className="font-bold text-teal-700 dark:text-teal-400 hover:underline">
-                        {settings.phone_hotline || '+94 77 123 4567'}
+                      {PHARMACY_INFO.phones.hotlineLabel}:{' '}
+                      <a href={`tel:${PHARMACY_INFO.phones.hotlineRaw}`} className="font-bold text-teal-700 dark:text-teal-400 hover:underline">
+                        {PHARMACY_INFO.phones.hotline}
                       </a>
                     </div>
                   </div>
@@ -179,8 +154,8 @@ export default function AboutContactPage({ initialFocus = 'about' }) {
                 <div>
                   <span className="font-bold block text-slate-900 dark:text-white">Official Dispensary Inquiries:</span>
                   <p className="mt-1">
-                    <a href={`mailto:${settings.email || 'info@mypharmacist.com'}`} className="font-bold text-teal-700 dark:text-teal-400 hover:underline">
-                      {settings.email || 'info@mypharmacist.com'}
+                    <a href={`mailto:${PHARMACY_INFO.email.general}`} className="font-bold text-teal-700 dark:text-teal-400 hover:underline">
+                      {PHARMACY_INFO.email.general}
                     </a>
                   </p>
                 </div>
@@ -195,12 +170,12 @@ export default function AboutContactPage({ initialFocus = 'about' }) {
               </h4>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-100 dark:border-slate-800">
-                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Weekdays (Mon - Fri)</span>
-                  <span className="font-bold text-slate-800 dark:text-slate-200">8:00 AM – 10:00 PM</span>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">{PHARMACY_INFO.hours.weekdaysLabel}</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">{PHARMACY_INFO.hours.weekdays}</span>
                 </div>
                 <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-100 dark:border-slate-800">
-                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Weekends & Holidays</span>
-                  <span className="font-bold text-slate-800 dark:text-slate-200">8:30 AM – 9:00 PM</span>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">{PHARMACY_INFO.hours.sundayHolidaysLabel}</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">{PHARMACY_INFO.hours.sundayHolidays}</span>
                 </div>
               </div>
             </div>
