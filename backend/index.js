@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import pool, { testConnection } from './config/db.js';
 
-// Route imports
+// Route imports (reloaded)
 import medicinesRoutes from './routes/medicines.js';
 import categoriesRoutes from './routes/categories.js';
 import brandsRoutes from './routes/brands.js';
@@ -99,11 +99,13 @@ app.use((err, req, res, next) => {
 });
 
 import { initializeDatabaseCatalog } from './scripts/initWellnessCatalog.js';
+import { initADBMSViews } from './services/adbmsService.js';
 
 // Start Server
 app.listen(PORT, async () => {
   console.log(`[VDC Store Server] Express running on port ${PORT}`);
   await testConnection();
+  await initADBMSViews();
   await initializeDatabaseCatalog();
 });
 

@@ -1,7 +1,7 @@
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config({ override: true });
 
 /**
  * MySQL Connection Pool Configuration using mysql2/promise.
@@ -17,6 +17,7 @@ const pool = mysql.createPool({
   waitForConnections: process.env.DB_WAIT_FOR_CONNECTIONS !== 'false',
   connectionLimit: parseInt(process.env.DB_CONNECTION_LIMIT || '10', 10),
   queueLimit: parseInt(process.env.DB_QUEUE_LIMIT || '0', 10),
+  multipleStatements: true,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0
 });
