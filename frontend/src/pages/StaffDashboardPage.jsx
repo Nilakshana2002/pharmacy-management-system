@@ -20,6 +20,7 @@ import {
   getSalesHistory, getSaleById, getDailySalesReport, getMonthlySalesReport,
   getBestSellingReport, getInventoryValuationReport, getUsers,
   createUser, updateUser, toggleUserStatus, executeBatchAction,
+  getSupplierPerformance, getPurchases,
   getAdminCustomers, createAdminCustomer, updateAdminCustomer,
   toggleAdminCustomerStatus, deleteAdminCustomer,
   getAdminInquiries, updateAdminInquiryStatus, respondToAdminInquiry,
@@ -303,6 +304,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   const [dispensePaymentMethod, setDispensePaymentMethod] = useState('CASH'); // 'CASH' | 'CARD'
   const [dispenseSuccess, setDispenseSuccess] = useState(null);
   const [dispenseLoading, setDispenseLoading] = useState(false);
+  const [posCart, setPosCart] = useState([]); // Multi-item cart for POS counter orders
 
   // Form states
   const [medForm, setMedForm] = useState({
@@ -312,9 +314,18 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   });
 
   const [batchForm, setBatchForm] = useState({
-    medicine_id: '', supplier_id: '', batch_number: '',
+    medicine_id: '', supplier_id: '', batch_number: '', invoice_number: '',
     manufacture_date: '', expiry_date: '', quantity: '', unit_cost: ''
   });
+
+  const [batchSubTab, setBatchSubTab] = useState('lots'); // 'lots' | 'purchases' | 'performance'
+  const [purchasesList, setPurchasesList] = useState([]);
+  const [supplierPerformanceList, setSupplierPerformanceList] = useState([]);
+  const [purchaseSearch, setPurchaseSearch] = useState('');
+  const [supplierPerfSearch, setSupplierPerfSearch] = useState('');
+  const [selectedSupplierNameFilter, setSelectedSupplierNameFilter] = useState('ALL');
+  const [purchaseSupplierFilter, setPurchaseSupplierFilter] = useState('ALL');
+  const [salesCustomerSearch, setSalesCustomerSearch] = useState('');
 
   const [adjustQty, setAdjustQty] = useState('');
   const [adjustReason, setAdjustReason] = useState('Routine counter stock update');
@@ -361,14 +372,16 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         getInventoryValuationReport(),
         getUsers(),
         getAdminCustomers(),
-        getAdminInquiries()
+        getAdminInquiries(),
+        getPurchases(),
+        getSupplierPerformance()
       ]);
 
       const [
         statsRes, medsRes, batchRes, lowRes, expRes, 
         logRes, supRes, catRes, brRes, salesRes, 
         dailyRes, monthRes, bestRes, valRes, usersRes,
-        customersRes, inquiriesRes
+        customersRes, inquiriesRes, purchasesRes, supPerfRes
       ] = results.map((r) => (r.status === 'fulfilled' ? r.value : null));
 
       if (statsRes?.success) setStats(statsRes.data);
@@ -388,6 +401,8 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
       if (usersRes?.success) setStaffUsers(usersRes.data || []);
       if (customersRes?.success) setCustomers(customersRes.data || []);
       if (inquiriesRes?.success) setInquiries(inquiriesRes.data || []);
+      if (purchasesRes?.success) setPurchasesList(purchasesRes.data || []);
+      if (supPerfRes?.success) setSupplierPerformanceList(supPerfRes.data || []);
     } catch (err) {
       console.error('Error loading dashboard:', err);
     } finally {
@@ -1078,7 +1093,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
       if (res.success) {
         setIsNewBatchModalOpen(false);
         setBatchForm({
-          medicine_id: '', supplier_id: '', batch_number: '',
+          medicine_id: '', supplier_id: '', batch_number: '', invoice_number: '',
           manufacture_date: '', expiry_date: '', quantity: '', unit_cost: ''
         });
         await loadDashboardData();
@@ -1249,6 +1264,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
 
   // Full Reset POS register for next customer
   const handleResetPos = () => {
+    setPosCart([]);
     setDispenseMedId('');
     setDispenseBatchId('');
     setPatientName('');
@@ -1288,6 +1304,86 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   const liveTotalBill = Number((liveUnitPrice * calculatedDispenseUnits).toFixed(2));
   const liveOriginalTotalBill = Number((rawUnitPrice * calculatedDispenseUnits).toFixed(2));
   const liveDiscountSavings = Number((medDiscountDeduction * calculatedDispenseUnits).toFixed(2));
+
+  // Multi-item POS Cart Calculations
+  const cartTotalBill = Number(posCart.reduce((sum, it) => sum + (Number(it.subtotal) || 0), 0).toFixed(2));
+  const posGrandTotal = posCart.length > 0 
+    ? cartTotalBill 
+    : (selectedDispenseMed ? liveTotalBill : 0);
+  const posTotalItemsCount = posCart.length > 0 
+    ? posCart.length 
+    : (selectedDispenseMed ? 1 : 0);
+
+  // Multi-item Cart Actions
+  const handleAddToCart = () => {
+    const batch = batches.find(b => String(b.batch_id) === String(dispenseBatchId));
+    if (!selectedDispenseMed) {
+      alert('Please select a medicine formulation from the catalog.');
+      return;
+    }
+    if (!batch) {
+      alert('Please select an active unexpired batch in Step 3.');
+      return;
+    }
+    if (calculatedDispenseUnits > batch.stock_quantity) {
+      alert(`Insufficient stock. Current lot stock is ${batch.stock_quantity} units, but requested is ${calculatedDispenseUnits} units.`);
+      return;
+    }
+
+    const existingIndex = posCart.findIndex(it => 
+      String(it.medicine_id) === String(selectedDispenseMed.medicine_id) && 
+      String(it.batch_id) === String(batch.batch_id)
+    );
+
+    if (existingIndex >= 0) {
+      const newCart = [...posCart];
+      const combinedQty = newCart[existingIndex].quantity + calculatedDispenseUnits;
+      if (combinedQty > batch.stock_quantity) {
+        alert(`Cannot add more. Combined cart quantity (${combinedQty}) exceeds lot stock (${batch.stock_quantity}).`);
+        return;
+      }
+      newCart[existingIndex].quantity = combinedQty;
+      newCart[existingIndex].subtotal = Number((newCart[existingIndex].unit_price * combinedQty).toFixed(2));
+      newCart[existingIndex].packaging_desc = `${combinedQty} Units (${selectedDispenseMed.dosage_form || 'Formulation'})`;
+      setPosCart(newCart);
+    } else {
+      const cartItem = {
+        medicine_id: selectedDispenseMed.medicine_id,
+        medicine_name: selectedDispenseMed.name,
+        generic_name: selectedDispenseMed.generic_name,
+        dosage_form: selectedDispenseMed.dosage_form,
+        strength: selectedDispenseMed.strength,
+        batch_id: batch.batch_id,
+        batch_number: batch.batch_number,
+        expiry_date: batch.expiry_date,
+        quantity: calculatedDispenseUnits,
+        unit_price: liveUnitPrice,
+        subtotal: liveTotalBill,
+        packaging_desc: packagingDescription,
+        image_url: getMedicineProductImage(selectedDispenseMed)
+      };
+      setPosCart(prev => [...prev, cartItem]);
+    }
+
+    // Reset current item configuration so user can add next medicine
+    setDispenseMedId('');
+    setDispenseBatchId('');
+    setCardCount(1);
+    setLooseCount(1);
+    setBottleCount(1);
+    setVialCount(1);
+    setTubeCount(1);
+    setInhalerCount(1);
+    setPackCount(1);
+  };
+
+  const handleRemoveFromCart = (idx) => {
+    setPosCart(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleClearCart = () => {
+    setPosCart([]);
+  };
 
   // Handler for category selection
   const handleSelectCategoryForDispense = (catId) => {
@@ -1342,6 +1438,8 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
 
   // Dedicated receipt printer: opens a clean compact slip window (80mm POS style) to print ONLY the receipt
   const handlePrintReceiptSlip = (data) => {
+    const isMultiItem = Array.isArray(data?.items) && data.items.length > 0;
+    const itemsList = isMultiItem ? data.items : [];
     const medName = data?.medicineName || selectedDispenseMed?.name || 'Prescription Drug';
     const generic = data?.genericName || selectedDispenseMed?.generic_name || '';
     const dosage = data?.dosageForm || selectedDispenseMed?.dosage_form || '';
@@ -1355,9 +1453,10 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
     const rx = data?.prescriptionRef || prescriptionRef || 'OTC-Walk-in';
     const dateStr = data?.date || new Date().toLocaleString();
     const pharmacist = staffUser?.fullName || 'Licensed Pharmacist';
+    const paymentMode = data?.paymentMethod === 'CARD' ? 'CARD' : 'CASH';
 
-    const w = 440;
-    const h = 680;
+    const w = 460;
+    const h = 720;
     const left = Math.max(0, (window.screen.width - w) / 2);
     const top = Math.max(0, (window.screen.height - h) / 2);
     const printWindow = window.open(
@@ -1527,38 +1626,58 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
               <span class="row-label">Doctor Rx Ref:</span>
               <span class="row-val">${rx}</span>
             </div>
-            <div class="row">
-              <span class="row-label">Medication:</span>
-              <span class="row-val row-val-highlight">${medName}</span>
-            </div>
-            ${generic ? `
-            <div class="row">
-              <span class="row-label">Generic:</span>
-              <span class="row-val" style="font-size: 12px; color: #475569;">${generic}</span>
-            </div>` : ''}
-            <div class="row">
-              <span class="row-label">Dosage & Strength:</span>
-              <span class="row-val">${dosage} ${strength ? `(${strength})` : ''}</span>
-            </div>
-            <div class="row">
-              <span class="row-label">Lot / Batch #:</span>
-              <span class="row-val" style="font-family: monospace; color: #0f766e;">${lot}</span>
-            </div>
-            <div class="row">
-              <span class="row-label">Packaging:</span>
-              <span class="row-val row-val-highlight">${pkg}</span>
-            </div>
-            <div class="row">
-              <span class="row-label">Units Deducted:</span>
-              <span class="row-val">${units} units</span>
-            </div>
-            <div class="row">
-              <span class="row-label">Unit Rate:</span>
-              <span class="row-val">Rs. ${rate}</span>
-            </div>
-            <div class="row">
+
+            <div class="dashed-line"></div>
+
+            ${isMultiItem ? `
+              <div style="font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px;">Dispensed Items (${itemsList.length}):</div>
+              ${itemsList.map((it, idx) => `
+                <div style="padding: 5px 0; border-bottom: 1px dotted #cbd5e1; font-size: 12px;">
+                  <div style="display: flex; justify-content: space-between; font-weight: 800; color: #0f172a;">
+                    <span>${idx + 1}. ${it.medicine_name || it.medicineName}</span>
+                    <span style="font-family: monospace; color: #047857;">Rs. ${Number(it.subtotal || ((it.unit_price || 0) * it.quantity)).toFixed(2)}</span>
+                  </div>
+                  <div style="display: flex; justify-content: space-between; font-size: 10.5px; color: #64748b; margin-top: 1px;">
+                    <span>Lot #${it.batch_number || it.batchNumber || 'N/A'} • ${it.packaging_desc || (it.quantity + ' units')}</span>
+                    <span>@ Rs. ${Number(it.unit_price || 0).toFixed(2)}</span>
+                  </div>
+                </div>
+              `).join('')}
+            ` : `
+              <div class="row">
+                <span class="row-label">Medication:</span>
+                <span class="row-val row-val-highlight">${medName}</span>
+              </div>
+              ${generic ? `
+              <div class="row">
+                <span class="row-label">Generic:</span>
+                <span class="row-val" style="font-size: 12px; color: #475569;">${generic}</span>
+              </div>` : ''}
+              <div class="row">
+                <span class="row-label">Dosage & Strength:</span>
+                <span class="row-val">${dosage} ${strength ? `(${strength})` : ''}</span>
+              </div>
+              <div class="row">
+                <span class="row-label">Lot / Batch #:</span>
+                <span class="row-val" style="font-family: monospace; color: #0f766e;">${lot}</span>
+              </div>
+              <div class="row">
+                <span class="row-label">Packaging:</span>
+                <span class="row-val row-val-highlight">${pkg}</span>
+              </div>
+              <div class="row">
+                <span class="row-label">Units Deducted:</span>
+                <span class="row-val">${units} units</span>
+              </div>
+              <div class="row">
+                <span class="row-label">Unit Rate:</span>
+                <span class="row-val">Rs. ${rate}</span>
+              </div>
+            `}
+
+            <div class="row" style="margin-top: 8px;">
               <span class="row-label">Payment Mode:</span>
-              <span class="row-val" style="font-weight: 800; color: ${data?.paymentMethod === 'CARD' ? '#0284c7' : '#059669'};">${data?.paymentMethod || 'CASH'}</span>
+              <span class="row-val" style="font-weight: 800; color: ${paymentMode === 'CARD' ? '#0284c7' : '#059669'};">${paymentMode}</span>
             </div>
 
             <div class="solid-line"></div>
@@ -1594,36 +1713,61 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
     printWindow.document.close();
   };
 
-  // Quick Dispense Handler
+  // Quick Dispense Handler (Supports both Multi-item Cart and Single Item)
   const handleQuickDispense = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
-    const batch = batches.find(b => String(b.batch_id) === String(dispenseBatchId));
-    if (!batch) {
-      alert('Please select an active batch to dispense from in Step 3.');
+
+    let itemsToDispense = [];
+
+    if (posCart.length > 0) {
+      itemsToDispense = posCart;
+    } else if (selectedDispenseMed && dispenseBatchId) {
+      const batch = batches.find(b => String(b.batch_id) === String(dispenseBatchId));
+      if (!batch) {
+        alert('Please select an active batch to dispense from in Step 3.');
+        return;
+      }
+      if (calculatedDispenseUnits > batch.stock_quantity) {
+        alert(`Insufficient stock. Current lot stock is ${batch.stock_quantity} units, but requested is ${calculatedDispenseUnits} units.`);
+        return;
+      }
+      itemsToDispense = [{
+        medicine_id: selectedDispenseMed.medicine_id,
+        medicine_name: selectedDispenseMed.name,
+        generic_name: selectedDispenseMed.generic_name,
+        dosage_form: selectedDispenseMed.dosage_form,
+        strength: selectedDispenseMed.strength,
+        batch_id: batch.batch_id,
+        batch_number: batch.batch_number,
+        expiry_date: batch.expiry_date,
+        quantity: calculatedDispenseUnits,
+        unit_price: liveUnitPrice,
+        subtotal: liveTotalBill,
+        packaging_desc: packagingDescription
+      }];
+    } else {
+      alert('Please add at least one medicine to the bill or select a medicine with an active batch.');
       return;
     }
 
-    if (calculatedDispenseUnits > batch.stock_quantity) {
-      alert(`Insufficient stock. Current lot stock is ${batch.stock_quantity} units, but requested dispensation is ${calculatedDispenseUnits} units (${packagingDescription}).`);
-      return;
-    }
+    const totalBill = Number(itemsToDispense.reduce((sum, it) => sum + (Number(it.subtotal) || 0), 0).toFixed(2));
 
     try {
       setDispenseLoading(true);
-      const med = medicines.find(m => String(m.medicine_id) === String(batch.medicine_id));
-      const price = Number(batch.unit_price || med?.unit_price || 0);
-      const totalBill = price * calculatedDispenseUnits;
 
       const res = await createSale({
         patient_name: patientName.trim() || 'Walk-in Customer',
         prescription_ref: prescriptionRef.trim() || 'OTC',
-        medicine_id: batch.medicine_id,
-        batch_id: batch.batch_id,
-        quantity: calculatedDispenseUnits,
-        unit_price: price,
-        packaging_desc: packagingDescription,
-        payment_method: dispensePaymentMethod || 'CASH',
-        amount_paid: totalBill
+        payment_method: dispensePaymentMethod === 'CARD' ? 'CARD' : 'CASH',
+        amount_paid: totalBill,
+        items: itemsToDispense.map(it => ({
+          medicine_id: it.medicine_id,
+          batch_id: it.batch_id,
+          quantity: it.quantity,
+          unit_price: it.unit_price,
+          subtotal: it.subtotal,
+          packaging_desc: it.packaging_desc
+        }))
       });
 
       const invoiceNo = res?.data?.invoice_number || 'INV-COUNTER';
@@ -1631,17 +1775,18 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
       if (res && res.success) {
         const receiptData = {
           invoiceNumber: invoiceNo,
-          medicineName: batch.medicine_name,
-          genericName: med?.generic_name,
-          dosageForm: med?.dosage_form,
-          batchNumber: batch.batch_number,
-          quantity: calculatedDispenseUnits,
-          packagingSummary: packagingDescription,
-          unitPrice: price,
+          items: itemsToDispense,
+          medicineName: itemsToDispense[0]?.medicine_name,
+          genericName: itemsToDispense[0]?.generic_name,
+          dosageForm: itemsToDispense[0]?.dosage_form,
+          batchNumber: itemsToDispense[0]?.batch_number,
+          quantity: itemsToDispense[0]?.quantity,
+          packagingSummary: itemsToDispense[0]?.packaging_desc,
+          unitPrice: itemsToDispense[0]?.unit_price,
           totalBill: totalBill,
           patientName: patientName || 'Walk-in Customer',
           prescriptionRef: prescriptionRef || 'OTC-Walk-in',
-          paymentMethod: dispensePaymentMethod || 'CASH',
+          paymentMethod: dispensePaymentMethod === 'CARD' ? 'CARD' : 'CASH',
           date: new Date().toLocaleString()
         };
 
@@ -1649,6 +1794,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
         setDispenseSuccess(receiptData);
 
         // 2. Completely refresh and clear the form so it is instantly ready for the next bill
+        setPosCart([]);
         setDispenseCategoryId('');
         setDispenseMedId('');
         setDispenseBatchId('');
@@ -3910,6 +4056,74 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                   </div>
                 </div>
 
+                {/* Active Multi-Item Order Ticket */}
+                {posCart.length > 0 && (
+                  <div className={`p-4 rounded-2xl border space-y-3 ${
+                    isDark ? 'bg-slate-950/70 border-teal-500/30' : 'bg-teal-50/50 border-teal-200'
+                  }`}>
+                    <div className="flex items-center justify-between pb-2 border-b border-teal-500/20">
+                      <div className="flex items-center gap-2">
+                        <ShoppingCart className="w-4 h-4 text-teal-400 stroke-[2.4]" />
+                        <span className={`text-xs font-black uppercase tracking-wider ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                          Order Ticket ({posCart.length} {posCart.length === 1 ? 'Item' : 'Items'})
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleClearCart}
+                        className="text-[11px] text-rose-400 hover:text-rose-300 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                        title="Remove all items from ticket"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Clear All</span>
+                      </button>
+                    </div>
+
+                    {/* Items List */}
+                    <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                      {posCart.map((it, idx) => (
+                        <div
+                          key={`${it.medicine_id}-${it.batch_id}-${idx}`}
+                          className={`p-2.5 rounded-xl border flex items-center justify-between gap-2.5 transition-all ${
+                            isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className={`font-black text-xs ${isDark ? 'text-white' : 'text-slate-900'} truncate`}>
+                                {it.medicine_name}
+                              </span>
+                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-teal-500/20 text-teal-400">
+                                {it.dosage_form}
+                              </span>
+                            </div>
+                            <div className="text-[10.5px] text-slate-400 flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              <span>Lot #{it.batch_number}</span>
+                              <span>•</span>
+                              <span className="font-semibold text-slate-300 dark:text-slate-300">{it.packaging_desc}</span>
+                            </div>
+                          </div>
+
+                          <div className="text-right shrink-0">
+                            <div className="font-mono font-black text-xs text-emerald-400">
+                              Rs. {Number(it.subtotal).toFixed(2)}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveFromCart(idx)}
+                              className="text-[10px] text-rose-400 hover:text-rose-300 font-bold flex items-center gap-0.5 ml-auto mt-0.5 cursor-pointer"
+                              title="Remove item"
+                            >
+                              <X className="w-3 h-3" />
+                              <span>Remove</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Active Ring-Up Item Details & Tactile Quantity Elements */}
                 {selectedDispenseMed ? (
                   <div className="space-y-4 pt-1">
@@ -4331,34 +4545,74 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                     )}
                   </div>
 
-                  {/* Live Total Bill */}
+                  {/* Item Subtotal & Add to Order Ticket Button */}
+                  <div className={`p-3 rounded-2xl border flex items-center justify-between gap-3 ${
+                    isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block uppercase font-bold">Line Total</span>
+                      <span className="font-black text-sm text-emerald-400 font-mono">
+                        Rs. {liveTotalBill.toFixed(2)}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      id="pos-add-to-cart-btn"
+                      onClick={handleAddToCart}
+                      disabled={
+                        !dispenseBatchId || 
+                        (selectedDispenseBatch && calculatedDispenseUnits > selectedDispenseBatch.stock_quantity)
+                      }
+                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-400 hover:to-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-md shadow-teal-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Plus className="w-4 h-4 stroke-[2.8]" />
+                      <span>+ Add to Order Ticket</span>
+                    </button>
+                  </div>
+
+                </div>
+              ) : posCart.length === 0 ? (
+                /* Empty state when no item selected and cart is empty */
+                <div className="py-12 text-center text-slate-500 space-y-3">
+                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto ${
+                    isDark ? 'bg-slate-950 text-slate-600' : 'bg-slate-100 text-slate-400'
+                  }`}>
+                    <ShoppingBag className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <p className={`font-black text-sm ${isDark ? 'text-slate-300' : 'text-slate-800'}`}>
+                      No Items in Order
+                    </p>
+                    <p className="text-xs text-slate-400 max-w-xs mx-auto mt-1">
+                      Tap any medicine tile from the catalog on the left to configure quantity and add to this customer's ticket.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Grand Total & Checkout Panel (Available when cart has items OR an item is actively selected) */}
+              {(posCart.length > 0 || selectedDispenseMed) && (
+                <div className="space-y-4 pt-1">
+                  
+                  {/* Grand Total Amount Banner */}
                   <div className={`p-4 rounded-2xl border text-center ${
                     isDark ? 'bg-emerald-950/20 border-emerald-500/30' : 'bg-emerald-50 border-emerald-200'
                   }`}>
                     <span className="text-[11px] uppercase tracking-wider font-bold text-slate-400 block">
-                      Total Amount Payable
+                      Total Amount Payable ({posTotalItemsCount} {posTotalItemsCount === 1 ? 'Item' : 'Items'})
                     </span>
                     <span className="text-2xl sm:text-3xl font-black text-emerald-400 font-mono block mt-0.5">
-                      Rs. {liveTotalBill.toFixed(2)}
+                      Rs. {posGrandTotal.toFixed(2)}
                     </span>
-                    {isMedOnOffer && liveDiscountSavings > 0 && (
-                      <div className="mt-1.5 flex items-center justify-center gap-2 text-xs font-bold flex-wrap">
-                        <span className="text-slate-400 line-through font-mono">
-                          Rs. {liveOriginalTotalBill.toFixed(2)}
-                        </span>
-                        <span className="text-rose-500 font-mono">
-                          -Rs. {liveDiscountSavings.toFixed(2)} ({selectedDispenseMed?.discount_percent}% OFF)
-                        </span>
-                      </div>
-                    )}
                   </div>
 
-                  {/* Payment Method Selector (Pay by Cash default, or Card) */}
+                  {/* Payment Method Selector (Strictly CASH or CARD only) */}
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between text-[11px] font-bold">
                       <span className={isDark ? 'text-slate-300' : 'text-slate-700'}>Payment Method</span>
                       <span className="text-[10px] text-teal-400 font-mono">
-                        {dispensePaymentMethod === 'CASH' ? 'Cash Counter' : 'Card Terminal'}
+                        {dispensePaymentMethod === 'CARD' ? 'Card Terminal' : 'Cash Counter'}
                       </span>
                     </div>
 
@@ -4403,8 +4657,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                     onClick={handleQuickDispense}
                     disabled={
                       dispenseLoading || 
-                       !dispenseBatchId || 
-                      (selectedDispenseBatch && calculatedDispenseUnits > selectedDispenseBatch.stock_quantity)
+                      (posCart.length === 0 && (!dispenseBatchId || (selectedDispenseBatch && calculatedDispenseUnits > selectedDispenseBatch.stock_quantity)))
                     }
                     className="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
@@ -4412,28 +4665,11 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                     <span>
                       {dispenseLoading 
                         ? 'Dispensing Transaction...' 
-                        : `Confirm & Dispense (${dispensePaymentMethod === 'CARD' ? 'CARD' : 'CASH'} • Rs. ${liveTotalBill.toFixed(2)})`
+                        : `Complete Dispensing (${posTotalItemsCount} ${posTotalItemsCount === 1 ? 'Item' : 'Items'} • ${dispensePaymentMethod === 'CARD' ? 'CARD' : 'CASH'} • Rs. ${posGrandTotal.toFixed(2)})`
                       }
                     </span>
                   </button>
 
-                </div>
-              ) : (
-                /* Empty state when no item selected */
-                <div className="py-12 text-center text-slate-500 space-y-3">
-                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto ${
-                    isDark ? 'bg-slate-950 text-slate-600' : 'bg-slate-100 text-slate-400'
-                  }`}>
-                    <ShoppingBag className="w-7 h-7" />
-                  </div>
-                  <div>
-                    <p className={`font-black text-sm ${isDark ? 'text-slate-300' : 'text-slate-800'}`}>
-                      No Item Selected
-                    </p>
-                    <p className="text-xs text-slate-400 max-w-xs mx-auto mt-1">
-                      Tap any medicine tile from the catalog on the left to start prescription ring-up.
-                    </p>
-                  </div>
                 </div>
               )}
 
@@ -4749,45 +4985,110 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
           isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
         }`}>
           {/* Section Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-teal-500" />
+                <Clock className="w-5 h-5 text-teal-500 shrink-0" />
                 <h2 className={`text-base font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                  Physical Batch Inventory & Expiry Records
+                  Inventory Batches & Wholesale Procurement
                 </h2>
               </div>
               <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'} mt-0.5`}>
-                Tracks individual lot numbers, manufacture and expiry dates, quarantine holdings, and certified disposal protocols.
+                Links physical medicine lots with supplier purchase orders, trigger-calculated wholesale costs, and live supplier performance analytics.
               </p>
             </div>
 
-            <div className="flex items-center gap-3 pr-2 sm:pr-4">
-              <div className="relative">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={batchSearch}
-                  onChange={(e) => setBatchSearch(e.target.value)}
-                  placeholder="Filter lot / formulation / supplier..."
-                  className={`pl-9 pr-3 py-1.5 rounded-xl border text-xs focus:outline-none ${
-                    isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'
-                  }`}
-                />
-              </div>
-
+            <div className="flex flex-wrap items-center gap-2.5">
               <button
                 onClick={() => setIsNewBatchModalOpen(true)}
-                className="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-teal-600/20 transition-all shrink-0 mr-2 sm:mr-3"
+                className="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-teal-600/20 transition-all shrink-0"
               >
                 <Plus className="w-3.5 h-3.5 stroke-[3]" />
-                Receive Batch
+                Receive Batch & Issue PO
               </button>
+
+              {batchSubTab === 'lots' && (
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={batchSearch}
+                    onChange={(e) => setBatchSearch(e.target.value)}
+                    placeholder="Filter lot / formulation / supplier..."
+                    className={`pl-9 pr-3 py-2 rounded-xl border text-xs focus:outline-none w-52 sm:w-60 ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'
+                    }`}
+                  />
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Expired Stock Emergency Action Banner */}
-          {expiredWithStockCount > 0 && (
+          {/* Sub Navigation Bar for Batches & Procurement */}
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+            <button
+              onClick={() => setBatchSubTab('lots')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border ${
+                batchSubTab === 'lots'
+                  ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
+                  : isDark
+                    ? 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-900'
+                    : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              <Package className="w-4 h-4" />
+              <span>Physical Batches & Lots</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-black ${
+                batchSubTab === 'lots' ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+              }`}>
+                {batches.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setBatchSubTab('purchases')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border ${
+                batchSubTab === 'purchases'
+                  ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
+                  : isDark
+                    ? 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-900'
+                    : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              <Receipt className="w-4 h-4" />
+              <span>Wholesale Invoices / POs</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-black ${
+                batchSubTab === 'purchases' ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+              }`}>
+                {purchasesList.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setBatchSubTab('performance')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border ${
+                batchSubTab === 'performance'
+                  ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
+                  : isDark
+                    ? 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-900'
+                    : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              <TrendingUp className="w-4 h-4" />
+              <span>Supplier Performance</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-black ${
+                batchSubTab === 'performance' ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+              }`}>
+                {supplierPerformanceList.length}
+              </span>
+            </button>
+          </div>
+
+          {/* SUB-TAB 1: PHYSICAL BATCHES & EXPIRY PROTOCOLS */}
+          {batchSubTab === 'lots' && (
+            <>
+              {/* Expired Stock Emergency Action Banner */}
+              {expiredWithStockCount > 0 && (
             <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs animate-in fade-in duration-200">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-rose-600/30 animate-pulse">
@@ -5026,6 +5327,357 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
               </tbody>
             </table>
           </div>
+        </>
+      )}
+
+      {/* SUB-TAB 2: WHOLESALE PURCHASE INVOICES */}
+      {batchSubTab === 'purchases' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          {/* Wholesale PO Metrics */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-950/50 border-slate-850' : 'bg-slate-50 border-slate-200'}`}>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Total Purchase Invoices</span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-xl font-black font-mono text-teal-600 dark:text-teal-400">{purchasesList.length}</span>
+                <span className="text-[10px] text-slate-500">Recorded POs</span>
+              </div>
+            </div>
+
+            <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-950/50 border-slate-850' : 'bg-slate-50 border-slate-200'}`}>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Wholesale Spend</span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-xl font-black font-mono text-emerald-600 dark:text-emerald-400">
+                  LKR {purchasesList.reduce((acc, p) => acc + Number(p.total_amount || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+
+            <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-950/50 border-slate-850' : 'bg-slate-50 border-slate-200'}`}>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Units Procured</span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-xl font-black font-mono text-indigo-600 dark:text-indigo-400">
+                  {purchasesList.reduce((acc, p) => acc + Number(p.total_units_procured || 0), 0).toLocaleString()}
+                </span>
+                <span className="text-[10px] text-slate-500">Inbound Units</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Search & Filter Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+            <div className="flex flex-wrap items-center gap-2.5 flex-1">
+              <div className="relative flex-1 min-w-[200px] max-w-sm">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={purchaseSearch}
+                  onChange={(e) => setPurchaseSearch(e.target.value)}
+                  placeholder="Search by PO #, supplier, or staff..."
+                  className={`w-full pl-9 pr-3 py-1.5 rounded-xl border text-xs focus:outline-none ${
+                    isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'
+                  }`}
+                />
+              </div>
+
+              {/* Specific Supplier Filter */}
+              <div className="flex items-center gap-1.5">
+                <Filter className="w-3.5 h-3.5 text-slate-400" />
+                <select
+                  value={purchaseSupplierFilter}
+                  onChange={(e) => setPurchaseSupplierFilter(e.target.value)}
+                  className={`px-3 py-1.5 rounded-xl border text-xs font-semibold focus:outline-none cursor-pointer ${
+                    isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-slate-50 border-slate-200 text-slate-700'
+                  }`}
+                >
+                  <option value="ALL">All Suppliers</option>
+                  {Array.from(new Set(purchasesList.map(p => p.supplier_name).filter(Boolean))).map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {purchaseSupplierFilter !== 'ALL' && (
+                <button
+                  onClick={() => setPurchaseSupplierFilter('ALL')}
+                  className="px-2 py-1 rounded-lg text-[11px] font-bold bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition-colors flex items-center gap-1 cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                  <span>Reset</span>
+                </button>
+              )}
+            </div>
+
+            <span className="text-[11px] text-slate-400">
+              Showing {purchasesList.filter(p => {
+                const q = purchaseSearch.toLowerCase();
+                const matchesSearch = !q || (p.invoice_number?.toLowerCase().includes(q) || p.supplier_name?.toLowerCase().includes(q) || p.received_by?.toLowerCase().includes(q));
+                const matchesSupplier = purchaseSupplierFilter === 'ALL' || p.supplier_name === purchaseSupplierFilter;
+                return matchesSearch && matchesSupplier;
+              }).length} of {purchasesList.length} wholesale orders
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className={`border-b uppercase tracking-wider text-[10px] font-bold ${
+                isDark ? 'bg-slate-950/60 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-600'
+              }`}>
+                <tr>
+                  <th className="py-3 px-3">PO / Invoice #</th>
+                  <th className="py-3 px-3">Purchase Date</th>
+                  <th className="py-3 px-3">Commercial Supplier</th>
+                  <th className="py-3 px-3 text-right">Items & Units</th>
+                  <th className="py-3 px-3 text-right">Invoice Total</th>
+                  <th className="py-3 px-3">Received By</th>
+                  <th className="py-3 px-3">Status</th>
+                  <th className="py-3 px-3">Procurement Notes</th>
+                </tr>
+              </thead>
+              <tbody className={`divide-y text-xs ${
+                isDark ? 'divide-slate-800 text-slate-300' : 'divide-slate-200 text-slate-700'
+              }`}>
+                {purchasesList
+                  .filter(p => {
+                    const q = purchaseSearch.toLowerCase();
+                    const matchesSearch = !q || (p.invoice_number?.toLowerCase().includes(q) || p.supplier_name?.toLowerCase().includes(q) || p.received_by?.toLowerCase().includes(q));
+                    const matchesSupplier = purchaseSupplierFilter === 'ALL' || p.supplier_name === purchaseSupplierFilter;
+                    return matchesSearch && matchesSupplier;
+                  })
+                  .map((p) => (
+                    <tr key={p.purchase_id} className={`transition-colors ${isDark ? 'hover:bg-slate-850/40' : 'hover:bg-slate-50'}`}>
+                      <td className="py-3 px-3 font-mono font-bold text-teal-600 dark:text-teal-400">
+                        <div className="flex items-center gap-1.5">
+                          <Receipt className="w-3.5 h-3.5 text-slate-400" />
+                          <span>{p.invoice_number || `PO-${p.purchase_id}`}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 text-slate-400">
+                        {new Date(p.purchase_date).toLocaleDateString()}
+                      </td>
+                      <td className="py-3 px-3">
+                        <span className={`font-bold block ${isDark ? 'text-white' : 'text-slate-900'}`}>{p.supplier_name}</span>
+                        {p.supplier_phone && <span className="text-[10px] text-slate-400 block">{p.supplier_phone}</span>}
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono">
+                        <span className="font-bold">{Number(p.total_units_procured).toLocaleString()}</span> units
+                        <span className="text-[10px] text-slate-400 block">({p.total_line_items} lot line{p.total_line_items > 1 ? 's' : ''})</span>
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                        LKR {Number(p.total_amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3 px-3 text-slate-400">
+                        <div className="flex items-center gap-1">
+                          <User className="w-3 h-3 text-slate-400" />
+                          <span>{p.received_by || 'Admin Staff'}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3">
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${
+                          p.status === 'RECEIVED'
+                            ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
+                            : p.status === 'ORDERED'
+                              ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                              : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
+                        }`}>
+                          {p.status || 'RECEIVED'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-slate-400 italic max-w-xs truncate">
+                        {p.notes || 'Inbound lot batch intake'}
+                      </td>
+                    </tr>
+                  ))}
+                {purchasesList.length === 0 && (
+                  <tr>
+                    <td colSpan="8" className="py-8 text-center text-slate-400 italic">
+                      No wholesale purchase orders recorded yet. Receive a batch to generate an invoice.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 3: SUPPLIER PERFORMANCE */}
+      {batchSubTab === 'performance' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          {/* Top KPI Banner */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-950/50 border-slate-850' : 'bg-slate-50 border-slate-200'}`}>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Commercial Suppliers</span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-xl font-black font-mono text-teal-600 dark:text-teal-400">{supplierPerformanceList.length}</span>
+                <span className="text-[10px] text-slate-500">Registered</span>
+              </div>
+            </div>
+
+            <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-950/50 border-slate-850' : 'bg-slate-50 border-slate-200'}`}>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Cumulative Procurement</span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-xl font-black font-mono text-emerald-600 dark:text-emerald-400">
+                  LKR {supplierPerformanceList.reduce((acc, s) => acc + Number(s.total_spend || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+
+            <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-950/50 border-slate-850' : 'bg-slate-50 border-slate-200'}`}>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Active Batches Supplied</span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-xl font-black font-mono text-indigo-600 dark:text-indigo-400">
+                  {supplierPerformanceList.reduce((acc, s) => acc + Number(s.active_batches_supplied || 0), 0)}
+                </span>
+                <span className="text-[10px] text-slate-500">Live Lots In Store</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Search & Filter Bar */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-2">
+            <div className="flex flex-wrap items-center gap-2.5 flex-1">
+              <div className="relative flex-1 min-w-[220px] max-w-sm">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={supplierPerfSearch}
+                  onChange={(e) => setSupplierPerfSearch(e.target.value)}
+                  placeholder="Search by supplier name, contact, or phone..."
+                  className={`w-full pl-9 pr-3 py-2 rounded-xl border text-xs focus:outline-none ${
+                    isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'
+                  }`}
+                />
+              </div>
+
+              {/* Specific Supplier Filter */}
+              <div className="flex items-center gap-1.5">
+                <Filter className="w-3.5 h-3.5 text-slate-400" />
+                <select
+                  value={selectedSupplierNameFilter}
+                  onChange={(e) => setSelectedSupplierNameFilter(e.target.value)}
+                  className={`px-3 py-2 rounded-xl border text-xs font-semibold focus:outline-none cursor-pointer ${
+                    isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-slate-50 border-slate-200 text-slate-700'
+                  }`}
+                >
+                  <option value="ALL">All Suppliers ({supplierPerformanceList.length})</option>
+                  {Array.from(new Set(supplierPerformanceList.map(s => s.supplier_name).filter(Boolean))).map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedSupplierNameFilter !== 'ALL' && (
+                <button
+                  onClick={() => setSelectedSupplierNameFilter('ALL')}
+                  className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition-colors flex items-center gap-1 cursor-pointer"
+                  title="Clear filter"
+                >
+                  <X className="w-3 h-3" />
+                  <span>Reset</span>
+                </button>
+              )}
+            </div>
+
+            <span className="text-[11px] text-slate-400">
+              Showing {
+                supplierPerformanceList.filter(s => {
+                  const q = supplierPerfSearch.toLowerCase();
+                  const matchesSearch = !q || (s.supplier_name?.toLowerCase().includes(q) || s.contact_person?.toLowerCase().includes(q) || s.phone?.includes(q) || s.email?.toLowerCase().includes(q));
+                  const matchesSupplier = selectedSupplierNameFilter === 'ALL' || s.supplier_name === selectedSupplierNameFilter;
+                  return matchesSearch && matchesSupplier;
+                }).length
+              } of {supplierPerformanceList.length} suppliers
+            </span>
+          </div>
+
+          {/* Performance Table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className={`border-b uppercase tracking-wider text-[10px] font-bold ${
+                isDark ? 'bg-slate-950/60 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-600'
+              }`}>
+                <tr>
+                  <th className="py-3 px-3">Supplier Name</th>
+                  <th className="py-3 px-3">Contact Person</th>
+                  <th className="py-3 px-3">Phone & Email</th>
+                  <th className="py-3 px-3 text-center">Total Purchase Orders</th>
+                  <th className="py-3 px-3 text-right">Cumulative Spend</th>
+                  <th className="py-3 px-3 text-center">Active Batches</th>
+                  <th className="py-3 px-3">Last Order Date</th>
+                  <th className="py-3 px-3 text-center">Performance Rating</th>
+                </tr>
+              </thead>
+              <tbody className={`divide-y text-xs ${
+                isDark ? 'divide-slate-800 text-slate-300' : 'divide-slate-200 text-slate-700'
+              }`}>
+                {supplierPerformanceList
+                  .filter(s => {
+                    const q = supplierPerfSearch.toLowerCase();
+                    const matchesSearch = !q || (s.supplier_name?.toLowerCase().includes(q) || s.contact_person?.toLowerCase().includes(q) || s.phone?.includes(q) || s.email?.toLowerCase().includes(q));
+                    const matchesSupplier = selectedSupplierNameFilter === 'ALL' || s.supplier_name === selectedSupplierNameFilter;
+                    return matchesSearch && matchesSupplier;
+                  })
+                  .map((s, idx) => (
+                    <tr key={s.supplier_id} className={`transition-colors ${isDark ? 'hover:bg-slate-850/40' : 'hover:bg-slate-50'}`}>
+                      <td className="py-3 px-3">
+                        <div className="flex items-center gap-2">
+                          <span className="w-6 h-6 rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center font-bold text-[11px]">
+                            {idx + 1}
+                          </span>
+                          <span className={`font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{s.supplier_name}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 text-slate-400 font-medium">
+                        {s.contact_person || 'N/A'}
+                      </td>
+                      <td className="py-3 px-3 text-slate-400">
+                        <div>{s.phone || 'N/A'}</div>
+                        {s.email && <div className="text-[10px] text-slate-500">{s.email}</div>}
+                      </td>
+                      <td className="py-3 px-3 text-center font-mono font-bold">
+                        <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200">
+                          {s.total_orders || 0}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                        LKR {Number(s.total_spend || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3 px-3 text-center font-mono">
+                        <span className={`px-2 py-0.5 rounded-md font-bold text-[11px] ${
+                          Number(s.active_batches_supplied) > 0
+                            ? 'bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-400'
+                        }`}>
+                          {s.active_batches_supplied || 0} lots
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-slate-400">
+                        {s.last_order_date ? new Date(s.last_order_date).toLocaleDateString() : 'No orders yet'}
+                      </td>
+                      <td className="py-3 px-3 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-teal-500/15 text-teal-600 dark:text-teal-300 border border-teal-500/30">
+                          Tier {idx < 2 ? 'A+' : idx < 5 ? 'A' : 'B'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                {supplierPerformanceList.filter(s => {
+                  const q = supplierPerfSearch.toLowerCase();
+                  const matchesSearch = !q || (s.supplier_name?.toLowerCase().includes(q) || s.contact_person?.toLowerCase().includes(q) || s.phone?.includes(q) || s.email?.toLowerCase().includes(q));
+                  const matchesSupplier = selectedSupplierNameFilter === 'ALL' || s.supplier_name === selectedSupplierNameFilter;
+                  return matchesSearch && matchesSupplier;
+                }).length === 0 && (
+                  <tr>
+                    <td colSpan="8" className="py-8 text-center text-slate-400 italic">
+                      No supplier performance records match the selected filter criteria.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
         </div>
       )}
 
@@ -5228,9 +5880,6 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                     <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-sky-500/10 text-sky-500">
                       CARD: {salesHistory.filter(s => s.payment_method === 'CARD').length}
                     </span>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-purple-500/10 text-purple-500">
-                      ONLINE: {salesHistory.filter(s => s.payment_method === 'ONLINE').length}
-                    </span>
                   </div>
                   <span className="text-[10px] text-slate-400 mt-1 block">Full payment reconciliation</span>
                 </div>
@@ -5306,7 +5955,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
               <div className={`p-6 rounded-3xl border space-y-4 ${
                 isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
               }`}>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <h3 className={`text-base font-bold flex items-center gap-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>
                       <Receipt className="w-4 h-4 text-emerald-500" />
@@ -5315,6 +5964,19 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                       Atomic POS transactions committed with row-level pessimistic locking & database synchronization
                     </p>
+                  </div>
+
+                  <div className="relative max-w-xs w-full">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={salesCustomerSearch}
+                      onChange={(e) => setSalesCustomerSearch(e.target.value)}
+                      placeholder="Filter by customer / patient name, invoice..."
+                      className={`w-full pl-9 pr-3 py-1.5 rounded-xl border text-xs focus:outline-none ${
+                        isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'
+                      }`}
+                    />
                   </div>
                 </div>
 
@@ -5338,14 +6000,17 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                     <tbody className={`divide-y text-xs ${
                       isDark ? 'divide-slate-800 text-slate-300' : 'divide-slate-200 text-slate-700'
                     }`}>
-                      {salesHistory.length === 0 ? (
-                        <tr>
-                          <td colSpan="9" className="py-6 text-center text-slate-500 italic">
-                            No POS sales records found.
-                          </td>
-                        </tr>
-                      ) : (
-                        salesHistory.map((s) => (
+                      {salesHistory
+                        .filter(s => {
+                          const q = (salesCustomerSearch || '').toLowerCase();
+                          return !q || (
+                            s.customer_name?.toLowerCase().includes(q) ||
+                            s.patient_name?.toLowerCase().includes(q) ||
+                            s.invoice_number?.toLowerCase().includes(q) ||
+                            s.cashier_name?.toLowerCase().includes(q)
+                          );
+                        })
+                        .map((s) => (
                           <tr key={s.sale_id} className="hover:bg-teal-500/5 transition-colors">
                             <td className="py-2.5 px-3 font-mono font-bold text-teal-600 dark:text-teal-400">
                               {s.invoice_number}
@@ -5393,7 +6058,21 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                               </button>
                             </td>
                           </tr>
-                        ))
+                        ))}
+                      {salesHistory.filter(s => {
+                        const q = (salesCustomerSearch || '').toLowerCase();
+                        return !q || (
+                          s.customer_name?.toLowerCase().includes(q) ||
+                          s.patient_name?.toLowerCase().includes(q) ||
+                          s.invoice_number?.toLowerCase().includes(q) ||
+                          s.cashier_name?.toLowerCase().includes(q)
+                        );
+                      }).length === 0 && (
+                        <tr>
+                          <td colSpan="9" className="py-6 text-center text-slate-500 italic">
+                            No POS sales records found matching the search criteria.
+                          </td>
+                        </tr>
                       )}
                     </tbody>
                   </table>
@@ -7869,20 +8548,25 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-slate-500 dark:text-slate-400 font-bold block text-xs">
-                    Batch / Lot Number *
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleAutoGenerateBatchNumber}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-teal-500/10 hover:bg-teal-500 text-teal-600 hover:text-white dark:text-teal-400 dark:hover:text-white border border-teal-500/30 hover:border-teal-500 transition-all cursor-pointer shadow-2xs"
-                    title="Generate compliant batch number for new products without lot number"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Generate Batch #</span>
-                  </button>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-slate-500 dark:text-slate-400 font-bold block text-xs">Supplier Invoice / PO Reference # (Optional)</label>
+                  <span className="text-[10px] text-teal-600 dark:text-teal-400 font-semibold">Auto-generated if empty</span>
                 </div>
+                <input
+                  type="text"
+                  value={batchForm.invoice_number || ''}
+                  onChange={(e) => setBatchForm({ ...batchForm, invoice_number: e.target.value.toUpperCase() })}
+                  placeholder="e.g. PO-2026-004 (Auto-creates wholesale purchase ledger entry)"
+                  className={`w-full p-2.5 sm:p-3 rounded-xl border text-xs font-mono focus:outline-none focus:border-teal-500 ${
+                    isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                  }`}
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-500 dark:text-slate-400 font-bold block mb-1 text-xs">
+                  Batch / Lot Number *
+                </label>
 
                 <div className="relative">
                   <input
@@ -7890,7 +8574,7 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                     required
                     value={batchForm.batch_number}
                     onChange={(e) => setBatchForm({ ...batchForm, batch_number: e.target.value.toUpperCase() })}
-                    placeholder="e.g. AUG-2026-X1 (or click Generate Batch #)"
+                    placeholder="e.g. AUG-2026-X1"
                     className={`w-full p-2.5 sm:p-3 pr-28 rounded-xl border font-mono text-xs focus:outline-none focus:border-teal-500 ${
                       isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
                     }`}
@@ -7899,40 +8583,11 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
                     type="button"
                     onClick={handleAutoGenerateBatchNumber}
                     className="absolute right-1.5 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-teal-600 hover:bg-teal-500 text-white flex items-center gap-1 transition-all shadow-xs cursor-pointer"
-                    title="Generate internal batch number"
+                    title="Generate unique lot number"
                   >
                     <Sparkles className="w-3 h-3" />
                     <span>Generate</span>
                   </button>
-                </div>
-
-                {/* Helper notice for new products without batch number */}
-                <div className="mt-1.5 p-2 rounded-xl bg-teal-50/70 dark:bg-teal-950/30 border border-teal-200/60 dark:border-teal-800/60 flex items-center justify-between text-[11px] gap-2">
-                  <div className="flex items-center gap-1.5 text-teal-800 dark:text-teal-300 min-w-0">
-                    <Sparkles className="w-3.5 h-3.5 text-teal-500 shrink-0" />
-                    <span className="truncate">
-                      <strong>New product without manufacturer lot?</strong> Auto-generate a compliant lot code.
-                    </span>
-                  </div>
-                  {batchForm.batch_number ? (
-                    <button
-                      type="button"
-                      onClick={handleAutoGenerateBatchNumber}
-                      className="text-[10px] font-bold text-teal-600 dark:text-teal-400 hover:underline shrink-0 flex items-center gap-1 cursor-pointer"
-                      title="Generate another unique lot number"
-                    >
-                      <RefreshCw className="w-2.5 h-2.5" />
-                      Regenerate
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleAutoGenerateBatchNumber}
-                      className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-600 text-white hover:bg-teal-500 shrink-0 cursor-pointer transition-colors"
-                    >
-                      Auto-Fill
-                    </button>
-                  )}
                 </div>
               </div>
 

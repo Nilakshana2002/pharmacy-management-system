@@ -152,19 +152,7 @@ CREATE TABLE IF NOT EXISTS users (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 8. PHARMACY SETTINGS TABLE
--- Configurable store information (contact, opening hours, address)
--- ------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS pharmacy_settings (
-    setting_key VARCHAR(50) PRIMARY KEY,
-    setting_value TEXT NOT NULL,
-    description VARCHAR(255),
-    is_public BOOLEAN DEFAULT FALSE,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB;
-
--- ------------------------------------------------------------
--- 9. AUDIT LOGS TABLE
+-- 8. AUDIT LOGS TABLE
 -- Automated change log triggered on batch and inventory changes
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -316,7 +304,7 @@ CREATE TABLE IF NOT EXISTS sale_item_batches (
 CREATE TABLE IF NOT EXISTS payments (
     payment_id INT AUTO_INCREMENT PRIMARY KEY,
     sale_id INT NOT NULL,
-    payment_method ENUM('CASH', 'CARD', 'ONLINE', 'INSURANCE') NOT NULL DEFAULT 'CASH',
+    payment_method ENUM('CASH', 'CARD') NOT NULL DEFAULT 'CASH',
     amount_paid DECIMAL(10, 2) NOT NULL,
     change_given DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
     reference_note VARCHAR(150),
@@ -383,30 +371,7 @@ CREATE TABLE IF NOT EXISTS prescription_files (
 ) ENGINE=InnoDB;
 
 -- ------------------------------------------------------------
--- 19. PROMOTIONS / COUPONS TABLE
--- Promotional discount vouchers with expiration tracking and minimum order rule
--- ------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS promotions (
-    promotion_id INT AUTO_INCREMENT PRIMARY KEY,
-    code VARCHAR(50) NOT NULL UNIQUE,
-    title VARCHAR(150) NOT NULL,
-    description TEXT,
-    discount_type ENUM('PERCENT', 'FIXED', 'FREE_DELIVERY') NOT NULL DEFAULT 'PERCENT',
-    discount_value DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
-    min_order_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
-    badge VARCHAR(50) DEFAULT 'SPECIAL OFFER',
-    category VARCHAR(100) DEFAULT 'General',
-    tag VARCHAR(100) DEFAULT 'Active Deal',
-    is_active BOOLEAN DEFAULT TRUE,
-    valid_from DATE NULL,
-    valid_until DATE NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_promotions_code (code),
-    INDEX idx_promotions_active (is_active)
-) ENGINE=InnoDB;
-
--- ------------------------------------------------------------
--- 20. CUSTOMER REVIEWS TABLE
+-- 19. CUSTOMER REVIEWS TABLE
 -- Verified patient testimonials and ratings linked to medicines & customers
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS customer_reviews (

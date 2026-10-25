@@ -1123,7 +1123,7 @@ export default function PrescriptionOrdersManager({ staffUser }) {
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 focus:outline-none"
                 >
                   <option value="Doctor signature or clinical license seal missing">Doctor signature or clinical license seal missing</option>
-                  <option value="Prescription has expired (>6 months from issue date)">Prescription has expired (>6 months from issue date)</option>
+                  <option value="Prescription has expired (>6 months from issue date)">Prescription has expired (&gt;6 months from issue date)</option>
                   <option value="Prescription handwriting is illegible or image blurred">Prescription handwriting is illegible or image blurred</option>
                   <option value="Schedule III controlled drug requires in-person paper original">Schedule III controlled drug requires in-person paper original</option>
                   <option value="Prescribed medication currently out of stock with no generic match">Prescribed medication currently out of stock with no generic match</option>

@@ -18,6 +18,8 @@ import {
   getAuditLogs,
   getSuppliers,
   createSupplier,
+  getSupplierPerformance,
+  getPurchases,
   createSale,
   getSalesHistory,
   getSaleById,
@@ -71,9 +73,11 @@ router.patch('/batches/:id/stock', requireRoles('ADMIN', 'PHARMACIST'), adjustBa
 router.post('/batches/:id/action', requireRoles('ADMIN', 'PHARMACIST'), handleBatchAction);
 router.get('/stock-movements', getStockMovements);
 
-// 5. Suppliers Management
+// 5. Suppliers Management & Procurement
 router.get('/suppliers', getSuppliers);
 router.post('/suppliers', requireRoles('ADMIN'), createSupplier);
+router.get('/supplier-performance', getSupplierPerformance);
+router.get('/purchases', getPurchases);
 
 // 6. Advanced DBMS Reports
 router.get('/reports/low-stock', getLowStockReport);

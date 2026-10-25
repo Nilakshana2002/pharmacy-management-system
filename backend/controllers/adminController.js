@@ -6,14 +6,26 @@ import { fileURLToPath } from 'url';
 import { ensureCustomersTable } from './customerController.js';
 
 /**
- * GET /api/admin/dashboard
- * Aggregated Inventory & Operational Metrics
- */
-/**
- * Sales, items, batches, payments, stock movements, promotions, reviews, and logs 
+ * Sales, items, batches, payments, stock movements, reviews, and logs 
  * are all fully managed via database/schema.sql and seed.sql
  */
+let salesTablesChecked = false;
+
 export const ensureSalesTables = async () => {
+  if (salesTablesChecked) return true;
+  salesTablesChecked = true;
+  try {
+    await pool.query("UPDATE payments SET payment_method = 'CARD' WHERE payment_method NOT IN ('CASH', 'CARD')");
+    await pool.query("ALTER TABLE payments MODIFY COLUMN payment_method ENUM('CASH', 'CARD') NOT NULL DEFAULT 'CASH'");
+  } catch (migErr) {
+    // Column might already have the strict ENUM or constraint
+  }
+  try {
+    await pool.query("DROP VIEW IF EXISTS v_active_promotions");
+    await pool.query("DROP TABLE IF EXISTS promotions");
+  } catch (dropErr) {
+    // Table or view might already be dropped
+  }
   return true;
 };
 
@@ -152,7 +164,6 @@ export const getDashboardStats = async (req, res) => {
         (SELECT COUNT(*) FROM customers WHERE is_active = TRUE) AS total_customers,
         (SELECT COUNT(*) FROM prescription_orders WHERE status = 'pending') AS pending_prescriptions,
         (SELECT COUNT(*) FROM inquiries WHERE status = 'NEW') AS new_inquiries,
-        (SELECT COUNT(*) FROM promotions WHERE is_active = TRUE) AS active_promotions,
         -- Financial & Transactional Analytics
         (SELECT COUNT(*) FROM sales WHERE DATE(sale_date) = CURDATE() AND (payment_status = 'PAID' OR payment_status = 'paid' OR payment_status = 'COMPLETED' OR payment_status IS NULL OR payment_status = '')) AS today_sales_count,
         (SELECT COALESCE(SUM(total_amount), 0.00) FROM sales WHERE DATE(sale_date) = CURDATE() AND (payment_status = 'PAID' OR payment_status = 'paid' OR payment_status = 'COMPLETED' OR payment_status IS NULL OR payment_status = '')) AS today_revenue,
@@ -657,7 +668,7 @@ export const getBatches = async (req, res) => {
 
 /**
  * POST /api/admin/batches
- * Add a new batch (Uses Stored Procedure sp_receive_new_batch with direct fallback)
+ * Add a new batch (Uses Stored Procedure sp_receive_new_batch with wholesale purchases tracking & fallback)
  */
 export const createBatch = async (req, res) => {
   try {
@@ -665,6 +676,7 @@ export const createBatch = async (req, res) => {
       medicine_id,
       supplier_id,
       batch_number,
+      invoice_number,
       manufacture_date,
       expiry_date,
       quantity,
@@ -679,27 +691,64 @@ export const createBatch = async (req, res) => {
     }
 
     const performer = req.user ? req.user.fullName : 'Admin Staff';
+    const effectiveInvoice = (invoice_number && invoice_number.trim()) || 
+      `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+
     let newBatchId;
+    let newPurchaseId;
 
     try {
-      const sql = `CALL sp_receive_new_batch(?, ?, ?, ?, ?, ?, ?, ?, @new_batch_id)`;
-      await pool.query(sql, [
+      const sql = `CALL sp_receive_new_batch(?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      const [callRows] = await pool.query(sql, [
         parseInt(medicine_id, 10),
         parseInt(supplier_id, 10),
         batch_number.trim(),
+        effectiveInvoice,
         manufacture_date,
         expiry_date,
         parseInt(quantity, 10),
         parseFloat(unit_cost) || 0.0,
         performer
       ]);
-      const [outRows] = await pool.query('SELECT @new_batch_id AS batch_id');
-      newBatchId = outRows[0]?.batch_id;
+      const resultObj = Array.isArray(callRows) && Array.isArray(callRows[0]) ? callRows[0][0] : callRows[0];
+      newBatchId = resultObj?.new_batch_id || resultObj?.batch_id;
+      newPurchaseId = resultObj?.purchase_id;
     } catch (procErr) {
-      // Direct transactional insert fallback
+      // Direct transactional insert fallback ensuring purchases & purchase_items tracking
       const connection = await pool.getConnection();
       try {
         await connection.beginTransaction();
+
+        // 1. Create Inbound Wholesale Purchase Order Header
+        const [poRes] = await connection.query(`
+          INSERT INTO purchases (supplier_id, invoice_number, purchase_date, total_amount, status, received_by, notes)
+          VALUES (?, ?, CURDATE(), 0.00, 'RECEIVED', ?, ?)
+        `, [parseInt(supplier_id, 10), effectiveInvoice, performer, `Inbound procurement lot: ${batch_number.trim()}`]);
+        newPurchaseId = poRes.insertId;
+
+        // 2. Insert Wholesale Purchase Line Item (Fires trg_after_purchase_item_insert!)
+        const lineSubtotal = (parseInt(quantity, 10) * (parseFloat(unit_cost) || 0.0)).toFixed(2);
+        await connection.query(`
+          INSERT INTO purchase_items (purchase_id, medicine_id, batch_number, quantity, unit_cost, subtotal, expiry_date)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `, [
+          newPurchaseId,
+          parseInt(medicine_id, 10),
+          batch_number.trim(),
+          parseInt(quantity, 10),
+          parseFloat(unit_cost) || 0.0,
+          lineSubtotal,
+          expiry_date
+        ]);
+
+        // Recalculate/verify purchase total
+        await connection.query(`
+          UPDATE purchases 
+          SET total_amount = (SELECT COALESCE(SUM(subtotal), 0.00) FROM purchase_items WHERE purchase_id = ?)
+          WHERE purchase_id = ?
+        `, [newPurchaseId, newPurchaseId]);
+
+        // 3. Insert Physical Medicine Batch
         const [insertRes] = await connection.query(`
           INSERT INTO medicine_batches (
             medicine_id, supplier_id, batch_number, manufacture_date, 
@@ -717,10 +766,11 @@ export const createBatch = async (req, res) => {
         ]);
         newBatchId = insertRes.insertId;
 
+        // 4. Log Physical Inventory Movement
         await connection.query(`
           INSERT INTO stock_movements (batch_id, movement_type, quantity_changed, reason, performed_by)
           VALUES (?, 'RESTOCK', ?, ?, ?)
-        `, [newBatchId, parseInt(quantity, 10), `Initial batch: ${batch_number.trim()}`, performer]);
+        `, [newBatchId, parseInt(quantity, 10), `Inbound Wholesale PO: ${effectiveInvoice}`, performer]);
 
         await connection.commit();
       } catch (txErr) {
@@ -733,8 +783,10 @@ export const createBatch = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'New batch received and recorded.',
-      batch_id: newBatchId
+      message: 'New batch received and recorded under wholesale purchase order.',
+      batch_id: newBatchId,
+      purchase_id: newPurchaseId,
+      invoice_number: effectiveInvoice
     });
   } catch (error) {
     console.error('[Create Batch Error]:', error);
@@ -1317,27 +1369,59 @@ export const createSale = async (req, res) => {
     unit_price,
     packaging_desc = '1 Unit',
     payment_method = 'CASH',
-    amount_paid
+    amount_paid,
+    items
   } = req.body;
 
-  if (!medicine_id || !batch_id || !quantity || parseInt(quantity, 10) <= 0) {
-    return res.status(400).json({
-      success: false,
-      message: 'Valid medicine ID, batch ID, and positive quantity are required.'
+  // 1. Normalize items array (supporting both multi-item array and single item format)
+  let normalizedItems = [];
+  if (Array.isArray(items) && items.length > 0) {
+    for (const it of items) {
+      const q = parseInt(it.quantity, 10);
+      if (!it.medicine_id || !q || q <= 0) continue;
+      normalizedItems.push({
+        medicine_id: parseInt(it.medicine_id, 10),
+        batch_id: it.batch_id ? parseInt(it.batch_id, 10) : null,
+        quantity: q,
+        unit_price: parseFloat(it.unit_price) || 0.0,
+        subtotal: it.subtotal !== undefined ? parseFloat(it.subtotal) : parseFloat(((parseFloat(it.unit_price) || 0.0) * q).toFixed(2)),
+        packaging_desc: it.packaging_desc || '1 Unit'
+      });
+    }
+  } else if (medicine_id && quantity && parseInt(quantity, 10) > 0) {
+    const q = parseInt(quantity, 10);
+    const p = parseFloat(unit_price) || 0.0;
+    normalizedItems.push({
+      medicine_id: parseInt(medicine_id, 10),
+      batch_id: batch_id ? parseInt(batch_id, 10) : null,
+      quantity: q,
+      unit_price: p,
+      subtotal: parseFloat((p * q).toFixed(2)),
+      packaging_desc: packaging_desc || '1 Unit'
     });
   }
 
-  const numericQty = parseInt(quantity, 10);
-  let effectivePrice = parseFloat(unit_price) || 0.0;
-  if (effectivePrice <= 0) {
-    try {
-      const [mRows] = await pool.query('SELECT unit_price FROM medicines WHERE medicine_id = ? LIMIT 1', [parseInt(medicine_id, 10)]);
-      if (mRows.length > 0 && mRows[0].unit_price) {
-        effectivePrice = parseFloat(mRows[0].unit_price);
-      }
-    } catch (e) {}
+  if (normalizedItems.length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'At least one valid medicine line item with positive quantity is required.'
+    });
   }
-  const totalBill = parseFloat((numericQty * effectivePrice).toFixed(2));
+
+  // Ensure effective price for any item missing pricing
+  for (const item of normalizedItems) {
+    if (item.unit_price <= 0) {
+      try {
+        const [mRows] = await pool.query('SELECT unit_price FROM medicines WHERE medicine_id = ? LIMIT 1', [item.medicine_id]);
+        if (mRows.length > 0 && mRows[0].unit_price) {
+          item.unit_price = parseFloat(mRows[0].unit_price);
+          item.subtotal = parseFloat((item.unit_price * item.quantity).toFixed(2));
+        }
+      } catch (e) {}
+    }
+  }
+
+  const totalBill = parseFloat(normalizedItems.reduce((acc, it) => acc + it.subtotal, 0).toFixed(2));
   const numericPaid = amount_paid !== undefined ? parseFloat(parseFloat(amount_paid).toFixed(2)) : totalBill;
 
   if (numericPaid < totalBill) {
@@ -1346,6 +1430,9 @@ export const createSale = async (req, res) => {
       message: `Amount paid (Rs. ${numericPaid.toFixed(2)}) cannot be less than total bill (Rs. ${totalBill.toFixed(2)}).`
     });
   }
+
+  // Strictly enforce only 'CASH' or 'CARD'
+  const validPaymentMethod = (payment_method || 'CASH').toUpperCase() === 'CARD' ? 'CARD' : 'CASH';
 
   const performer = req.user ? req.user.fullName : 'Staff Pharmacist';
   const rawUserId = req.user ? req.user.userId : null;
@@ -1376,39 +1463,53 @@ export const createSale = async (req, res) => {
   const changeGiven = Math.max(0, parseFloat((numericPaid - totalBill).toFixed(2)));
 
   // 2. PRIMARY ARCHITECTURAL PATH: Execute MySQL Stored Procedure sp_create_pos_sale
-  // Guarantees ACID concurrency control, row-level pessimistic locking (FOR UPDATE)
   let procedureSucceeded = false;
   let saleId = null;
   let invoiceNumber = null;
 
+  const dateSegment = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const randSegment = Math.floor(10000 + Math.random() * 90000);
+  const genInvoiceNumber = `INV-${dateSegment}-${randSegment}`;
+
   try {
-    await pool.query(
-      'CALL sp_create_pos_sale(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, @out_sale_id, @out_inv_no)',
+    const itemsJson = JSON.stringify(normalizedItems.map(it => ({
+      medicine_id: it.medicine_id,
+      quantity: it.quantity,
+      unit_price: it.unit_price,
+      subtotal: it.subtotal,
+      packaging_desc: it.packaging_desc || '1 Unit'
+    })));
+
+    const [spCallResult] = await pool.query(
+      'CALL sp_create_pos_sale(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
+        genInvoiceNumber,
         validUserId,
         validCustomerId,
         (patient_name || 'Walk-in Customer').trim(),
         (prescription_ref || 'OTC').trim(),
-        parseInt(medicine_id, 10),
-        parseInt(batch_id, 10),
-        numericQty,
-        effectivePrice,
-        packaging_desc || '1 Unit',
-        (payment_method || 'CASH').toUpperCase(),
+        totalBill,
+        0.00,
+        0.00,
+        totalBill,
+        validPaymentMethod,
         numericPaid,
-        performer
+        itemsJson
       ]
     );
 
-    const [outRows] = await pool.query('SELECT @out_sale_id AS sale_id, @out_inv_no AS invoice_number');
-    if (outRows && outRows.length > 0 && outRows[0].sale_id) {
-      saleId = outRows[0].sale_id;
-      invoiceNumber = outRows[0].invoice_number;
+    const resultRow = Array.isArray(spCallResult) && Array.isArray(spCallResult[0]) 
+      ? spCallResult[0][0] 
+      : spCallResult[0];
+
+    if (resultRow?.sale_id) {
+      saleId = resultRow.sale_id;
+      invoiceNumber = resultRow.invoice_number || genInvoiceNumber;
       procedureSucceeded = true;
-      console.log(`[ADBMS Stored Procedure Success]: CALL sp_create_pos_sale executed -> Sale #${saleId}, Invoice #${invoiceNumber} (Patient: ${patient_name}, Customer FK: ${validCustomerId})`);
+      console.log(`[ADBMS Stored Procedure Success]: CALL sp_create_pos_sale executed -> Sale #${saleId}, Invoice #${invoiceNumber}`);
     }
   } catch (spErr) {
-    console.warn('[ADBMS Stored Procedure Notice]: sp_create_pos_sale execution warning, checking fallback:', spErr.message);
+    console.warn('[ADBMS Stored Procedure Note]: sp_create_pos_sale note, continuing via lot transactional path:', spErr.message);
   }
 
   if (procedureSucceeded) {
@@ -1422,6 +1523,8 @@ export const createSale = async (req, res) => {
         total_amount: totalBill,
         amount_paid: numericPaid,
         change_given: changeGiven,
+        payment_method: validPaymentMethod,
+        items: normalizedItems,
         timestamp: new Date().toISOString()
       }
     });
@@ -1432,29 +1535,43 @@ export const createSale = async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    const [batchRows] = await connection.query(
-      'SELECT batch_id, medicine_id, batch_number, stock_quantity, status, expiry_date FROM medicine_batches WHERE batch_id = ? FOR UPDATE',
-      [parseInt(batch_id, 10)]
-    );
-
-    if (batchRows.length === 0) {
-      throw new Error(`Inventory batch lot #${batch_id} not found.`);
+    // Verify stock and lock batches for all items
+    for (const it of normalizedItems) {
+      if (it.batch_id) {
+        const [batchRows] = await connection.query(
+          'SELECT batch_id, medicine_id, batch_number, stock_quantity, status, expiry_date FROM medicine_batches WHERE batch_id = ? FOR UPDATE',
+          [it.batch_id]
+        );
+        if (batchRows.length === 0) {
+          throw new Error(`Inventory batch lot #${it.batch_id} not found.`);
+        }
+        if (batchRows[0].stock_quantity < it.quantity) {
+          throw new Error(`Insufficient batch stock for item #${it.medicine_id}. Available: ${batchRows[0].stock_quantity} units, Requested: ${it.quantity} units.`);
+        }
+      } else {
+        const [batchRows] = await connection.query(`
+          SELECT batch_id, stock_quantity 
+          FROM medicine_batches 
+          WHERE medicine_id = ? AND stock_quantity >= ? AND status = 'active' AND expiry_date > CURDATE()
+          ORDER BY expiry_date ASC 
+          LIMIT 1 
+          FOR UPDATE
+        `, [it.medicine_id, it.quantity]);
+        if (batchRows.length > 0) {
+          it.batch_id = batchRows[0].batch_id;
+        } else {
+          throw new Error(`Insufficient unexpired stock available for medicine #${it.medicine_id}.`);
+        }
+      }
     }
 
-    const batch = batchRows[0];
-    if (batch.stock_quantity < numericQty) {
-      throw new Error(`Insufficient batch stock. Available: ${batch.stock_quantity} units, Requested: ${numericQty} units.`);
-    }
-
-    const dateSegment = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const randSegment = Math.floor(10000 + Math.random() * 90000);
-    invoiceNumber = `INV-${dateSegment}-${randSegment}`;
+    invoiceNumber = genInvoiceNumber;
 
     const [saleRes] = await connection.query(`
       INSERT INTO sales (
         invoice_number, user_id, customer_id, patient_name, prescription_ref,
         subtotal, discount_amount, tax_amount, total_amount, payment_status, sale_date
-      ) VALUES (?, ?, ?, ?, ?, 0.00, 0.00, ?, 'PAID', CURRENT_TIMESTAMP)
+      ) VALUES (?, ?, ?, ?, ?, ?, 0.00, 0.00, ?, 'PAID', CURRENT_TIMESTAMP)
     `, [
       invoiceNumber,
       validUserId,
@@ -1467,51 +1584,56 @@ export const createSale = async (req, res) => {
 
     saleId = saleRes.insertId;
 
-    const [itemRes] = await connection.query(`
-      INSERT INTO sale_items (sale_id, medicine_id, quantity, unit_price, subtotal, packaging_desc)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `, [
-      saleId,
-      parseInt(medicine_id, 10),
-      numericQty,
-      effectivePrice,
-      totalBill,
-      packaging_desc || '1 Unit'
-    ]);
+    for (const it of normalizedItems) {
+      const [itemRes] = await connection.query(`
+        INSERT INTO sale_items (sale_id, medicine_id, quantity, unit_price, subtotal, packaging_desc)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `, [
+        saleId,
+        it.medicine_id,
+        it.quantity,
+        it.unit_price,
+        it.subtotal,
+        it.packaging_desc
+      ]);
 
-    try {
-      await connection.query(`
-        INSERT INTO sale_item_batches (sale_item_id, batch_id, quantity_allocated)
-        VALUES (?, ?, ?)
-      `, [itemRes.insertId, parseInt(batch_id, 10), numericQty]);
-    } catch (allocErr) {}
+      if (it.batch_id) {
+        try {
+          await connection.query(`
+            INSERT INTO sale_item_batches (sale_item_id, batch_id, quantity_allocated)
+            VALUES (?, ?, ?)
+          `, [itemRes.insertId, it.batch_id, it.quantity]);
+        } catch (allocErr) {}
+
+        await connection.query(`
+          UPDATE medicine_batches 
+          SET stock_quantity = stock_quantity - ?, 
+              status = CASE WHEN (stock_quantity - ?) <= 0 THEN 'depleted' ELSE status END,
+              updated_at = CURRENT_TIMESTAMP 
+          WHERE batch_id = ?
+        `, [it.quantity, it.quantity, it.batch_id]);
+
+        await connection.query(`
+          INSERT INTO stock_movements (batch_id, movement_type, quantity_changed, reason, performed_by, movement_date)
+          VALUES (?, 'DISPENSED', ?, ?, ?, CURRENT_TIMESTAMP)
+        `, [
+          it.batch_id,
+          -it.quantity,
+          `Sale ${invoiceNumber} to ${(patient_name || 'Walk-in').trim()} (Rx: ${(prescription_ref || 'OTC').trim()})`,
+          performer
+        ]);
+      }
+    }
 
     await connection.query(`
       INSERT INTO payments (sale_id, payment_method, amount_paid, change_given, reference_note, payment_date)
       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `, [
       saleId,
-      (payment_method || 'CASH').toUpperCase(),
+      validPaymentMethod,
       numericPaid,
       changeGiven,
       `Counter POS Receipt #${invoiceNumber}`
-    ]);
-
-    const newStock = batch.stock_quantity - numericQty;
-    const newStatus = newStock === 0 ? 'depleted' : batch.status;
-    await connection.query(
-      'UPDATE medicine_batches SET stock_quantity = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE batch_id = ?',
-      [newStock, newStatus, parseInt(batch_id, 10)]
-    );
-
-    await connection.query(`
-      INSERT INTO stock_movements (batch_id, movement_type, quantity_changed, reason, performed_by, movement_date)
-      VALUES (?, 'DISPENSED', ?, ?, ?, CURRENT_TIMESTAMP)
-    `, [
-      parseInt(batch_id, 10),
-      -numericQty,
-      `Sale ${invoiceNumber} to ${(patient_name || 'Walk-in').trim()} (Rx: ${(prescription_ref || 'OTC').trim()})`,
-      performer
     ]);
 
     await connection.commit();
@@ -1526,6 +1648,8 @@ export const createSale = async (req, res) => {
         total_amount: totalBill,
         amount_paid: numericPaid,
         change_given: changeGiven,
+        payment_method: validPaymentMethod,
+        items: normalizedItems,
         timestamp: new Date().toISOString()
       }
     });
@@ -2295,20 +2419,13 @@ export const createSupplier = async (req, res) => {
 
 /**
  * PUT /api/admin/settings
+ * Pharmacy store metadata is maintained via frontend static configuration
  */
 export const updatePharmacySettings = async (req, res) => {
-  try {
-    const settings = req.body;
-    for (const [key, value] of Object.entries(settings)) {
-      await pool.query(
-        'INSERT INTO pharmacy_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
-        [key, String(value), String(value)]
-      );
-    }
-    res.status(200).json({ success: true, message: 'Pharmacy settings updated.' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
+  res.status(200).json({ 
+    success: true, 
+    message: 'Store profile settings are managed via central frontend configuration (src/config/pharmacyInfo.js).' 
+  });
 };
 
 /**
@@ -2897,6 +3014,105 @@ export const deleteInquiry = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to delete customer inquiry.',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * GET /api/admin/supplier-performance
+ * Retrieves supplier procurement metrics from the v_supplier_order_performance database view
+ */
+export const getSupplierPerformance = async (req, res) => {
+  try {
+    let rows;
+    try {
+      [rows] = await pool.query(`
+        SELECT 
+          supplier_id,
+          supplier_name,
+          contact_person,
+          phone,
+          email,
+          total_orders,
+          total_spend,
+          active_batches_supplied,
+          last_order_date
+        FROM v_supplier_order_performance
+        ORDER BY total_spend DESC, total_orders DESC
+      `);
+    } catch (viewErr) {
+      console.warn('[Supplier Performance View Note - Falling back to direct aggregation]:', viewErr.message);
+      const [directRows] = await pool.query(`
+        SELECT 
+          s.supplier_id,
+          s.supplier_name,
+          s.contact_person,
+          s.phone,
+          s.email,
+          COUNT(DISTINCT p.purchase_id) AS total_orders,
+          COALESCE(SUM(p.total_amount), 0.00) AS total_spend,
+          COUNT(DISTINCT b.batch_id) AS active_batches_supplied,
+          MAX(p.purchase_date) AS last_order_date
+        FROM suppliers s
+        LEFT JOIN purchases p ON s.supplier_id = p.supplier_id
+        LEFT JOIN medicine_batches b ON s.supplier_id = b.supplier_id AND b.status = 'active'
+        GROUP BY s.supplier_id, s.supplier_name, s.contact_person, s.phone, s.email
+        ORDER BY total_spend DESC, total_orders DESC
+      `);
+      rows = directRows;
+    }
+
+    res.status(200).json({
+      success: true,
+      data: rows
+    });
+  } catch (error) {
+    console.error('[Supplier Performance Error]:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve supplier performance analytics.',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * GET /api/admin/purchases
+ * Retrieves itemized wholesale purchase invoices from purchases & purchase_items
+ */
+export const getPurchases = async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT 
+        p.purchase_id,
+        p.invoice_number,
+        p.purchase_date,
+        p.total_amount,
+        p.status,
+        p.received_by,
+        p.notes,
+        s.supplier_name,
+        s.phone AS supplier_phone,
+        s.email AS supplier_email,
+        COUNT(pi.purchase_item_id) AS total_line_items,
+        COALESCE(SUM(pi.quantity), 0) AS total_units_procured
+      FROM purchases p
+      INNER JOIN suppliers s ON p.supplier_id = s.supplier_id
+      LEFT JOIN purchase_items pi ON p.purchase_id = pi.purchase_id
+      GROUP BY p.purchase_id, p.invoice_number, p.purchase_date, p.total_amount, p.status, p.received_by, p.notes, s.supplier_name, s.phone, s.email
+      ORDER BY p.purchase_date DESC, p.purchase_id DESC
+      LIMIT 100
+    `);
+    res.status(200).json({
+      success: true,
+      data: rows
+    });
+  } catch (error) {
+    console.error('[Purchases Ledger Error]:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve wholesale purchase invoices.',
       error: error.message
     });
   }
