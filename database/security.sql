@@ -70,7 +70,6 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.medicines TO 'pharmacy_app'@
 GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.medicine_batches TO 'pharmacy_app'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.stock_movements TO 'pharmacy_app'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.users TO 'pharmacy_app'@'localhost';
-GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.pharmacy_settings TO 'pharmacy_app'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.audit_logs TO 'pharmacy_app'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.purchases TO 'pharmacy_app'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.purchase_items TO 'pharmacy_app'@'localhost';
@@ -81,7 +80,6 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.sale_item_batches TO 'pharma
 GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.payments TO 'pharmacy_app'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.prescription_orders TO 'pharmacy_app'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.prescription_files TO 'pharmacy_app'@'localhost';
-GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.promotions TO 'pharmacy_app'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.customer_reviews TO 'pharmacy_app'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.inquiries TO 'pharmacy_app'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.notification_logs TO 'pharmacy_app'@'localhost';
@@ -103,7 +101,6 @@ GRANT SELECT ON pharmacy_db.v_daily_sales TO 'pharmacy_app'@'localhost';
 GRANT SELECT ON pharmacy_db.v_monthly_sales TO 'pharmacy_app'@'localhost';
 GRANT SELECT ON pharmacy_db.v_sales_by_medicine TO 'pharmacy_app'@'localhost';
 GRANT SELECT ON pharmacy_db.v_payment_summary TO 'pharmacy_app'@'localhost';
-GRANT SELECT ON pharmacy_db.v_active_promotions TO 'pharmacy_app'@'localhost';
 GRANT SELECT ON pharmacy_db.v_approved_reviews TO 'pharmacy_app'@'localhost';
 GRANT SELECT ON pharmacy_db.v_customer_purchase_history TO 'pharmacy_app'@'localhost';
 
@@ -129,7 +126,6 @@ GRANT SELECT ON pharmacy_db.v_monthly_sales TO 'pharmacy_auditor'@'localhost';
 GRANT SELECT ON pharmacy_db.v_sales_by_medicine TO 'pharmacy_auditor'@'localhost';
 GRANT SELECT ON pharmacy_db.v_payment_summary TO 'pharmacy_auditor'@'localhost';
 GRANT SELECT ON pharmacy_db.v_customer_purchase_history TO 'pharmacy_auditor'@'localhost';
-GRANT SELECT ON pharmacy_db.v_active_promotions TO 'pharmacy_auditor'@'localhost';
 GRANT SELECT ON pharmacy_db.v_approved_reviews TO 'pharmacy_auditor'@'localhost';
 GRANT SELECT ON pharmacy_db.v_supplier_order_performance TO 'pharmacy_auditor'@'localhost';
 GRANT SELECT ON pharmacy_db.v_prescription_fulfillment_pipeline TO 'pharmacy_auditor'@'localhost';

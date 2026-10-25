@@ -135,16 +135,10 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
--- 8. PHARMACY SETTINGS TABLE
-CREATE TABLE IF NOT EXISTS pharmacy_settings (
-    setting_key VARCHAR(50) PRIMARY KEY,
-    setting_value TEXT NOT NULL,
-    description VARCHAR(255),
-    is_public BOOLEAN DEFAULT FALSE,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB;
+DROP TABLE IF EXISTS pharmacy_settings;
 
--- 9. AUDIT LOGS TABLE
+
+-- 8. AUDIT LOGS TABLE
 CREATE TABLE IF NOT EXISTS audit_logs (
     log_id INT AUTO_INCREMENT PRIMARY KEY,
     table_name VARCHAR(50) NOT NULL,
@@ -272,7 +266,7 @@ CREATE TABLE IF NOT EXISTS sale_item_batches (
 CREATE TABLE IF NOT EXISTS payments (
     payment_id INT AUTO_INCREMENT PRIMARY KEY,
     sale_id INT NOT NULL,
-    payment_method ENUM('CASH', 'CARD', 'ONLINE', 'INSURANCE') NOT NULL DEFAULT 'CASH',
+    payment_method ENUM('CASH', 'CARD') NOT NULL DEFAULT 'CASH',
     amount_paid DECIMAL(10, 2) NOT NULL,
     change_given DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
     reference_note VARCHAR(150),
@@ -330,27 +324,7 @@ CREATE TABLE IF NOT EXISTS prescription_files (
     INDEX idx_rx_files_order (order_id)
 ) ENGINE=InnoDB;
 
--- 19. PROMOTIONS / COUPONS TABLE
-CREATE TABLE IF NOT EXISTS promotions (
-    promotion_id INT AUTO_INCREMENT PRIMARY KEY,
-    code VARCHAR(50) NOT NULL UNIQUE,
-    title VARCHAR(150) NOT NULL,
-    description TEXT,
-    discount_type ENUM('PERCENT', 'FIXED', 'FREE_DELIVERY') NOT NULL DEFAULT 'PERCENT',
-    discount_value DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
-    min_order_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
-    badge VARCHAR(50) DEFAULT 'SPECIAL OFFER',
-    category VARCHAR(100) DEFAULT 'General',
-    tag VARCHAR(100) DEFAULT 'Active Deal',
-    is_active BOOLEAN DEFAULT TRUE,
-    valid_from DATE NULL,
-    valid_until DATE NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_promotions_code (code),
-    INDEX idx_promotions_active (is_active)
-) ENGINE=InnoDB;
-
--- 20. CUSTOMER REVIEWS TABLE
+-- 19. CUSTOMER REVIEWS TABLE
 CREATE TABLE IF NOT EXISTS customer_reviews (
     review_id INT AUTO_INCREMENT PRIMARY KEY,
     customer_id INT NULL,
@@ -790,28 +764,7 @@ INNER JOIN sales s ON p.sale_id = s.sale_id
 WHERE s.payment_status = 'PAID'
 GROUP BY p.payment_method;
 
--- View 9: Active Promotional Vouchers
-DROP VIEW IF EXISTS v_active_promotions;
-CREATE VIEW v_active_promotions AS
-SELECT 
-    promotion_id,
-    code,
-    title,
-    description,
-    discount_type,
-    discount_value,
-    min_order_amount,
-    badge,
-    category,
-    tag,
-    valid_from,
-    valid_until
-FROM promotions
-WHERE is_active = TRUE
-  AND (valid_from IS NULL OR valid_from <= CURDATE())
-  AND (valid_until IS NULL OR valid_until >= CURDATE());
-
--- View 10: Approved Patient Reviews
+-- View 9: Approved Patient Reviews
 DROP VIEW IF EXISTS v_approved_reviews;
 CREATE VIEW v_approved_reviews AS
 SELECT 
@@ -979,6 +932,7 @@ CREATE PROCEDURE sp_receive_new_batch(
     IN p_medicine_id INT,
     IN p_supplier_id INT,
     IN p_batch_number VARCHAR(80),
+    IN p_invoice_number VARCHAR(80),
     IN p_manufacture_date DATE,
     IN p_expiry_date DATE,
     IN p_quantity INT,
@@ -987,6 +941,8 @@ CREATE PROCEDURE sp_receive_new_batch(
 )
 BEGIN
     DECLARE v_batch_id INT;
+    DECLARE v_purchase_id INT;
+    DECLARE v_invoice VARCHAR(80);
 
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
@@ -1002,8 +958,31 @@ BEGIN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Received batch quantity must be greater than zero.';
     END IF;
 
+    -- Clean or auto-generate supplier PO reference
+    IF p_invoice_number IS NULL OR TRIM(p_invoice_number) = '' THEN
+        SET v_invoice = CONCAT('PO-', DATE_FORMAT(NOW(), '%Y%m%d'), '-', LPAD(FLOOR(RAND() * 10000), 4, '0'));
+    ELSE
+        SET v_invoice = TRIM(p_invoice_number);
+    END IF;
+
     START TRANSACTION;
 
+    -- 1. Create Inbound Wholesale Purchase Order Header
+    INSERT INTO purchases (
+        supplier_id, invoice_number, purchase_date, total_amount, status, received_by, notes
+    ) VALUES (
+        p_supplier_id, v_invoice, CURDATE(), 0.00, 'RECEIVED', p_received_by, CONCAT('Inbound procurement lot: ', p_batch_number)
+    );
+    SET v_purchase_id = LAST_INSERT_ID();
+
+    -- 2. Insert Wholesale Purchase Line Item (Fires trg_after_purchase_item_insert!)
+    INSERT INTO purchase_items (
+        purchase_id, medicine_id, batch_number, quantity, unit_cost, subtotal, expiry_date
+    ) VALUES (
+        v_purchase_id, p_medicine_id, p_batch_number, p_quantity, p_unit_cost, (p_quantity * p_unit_cost), p_expiry_date
+    );
+
+    -- 3. Register Physical Medicine Batch in Inventory
     INSERT INTO medicine_batches (
         medicine_id, supplier_id, batch_number, manufacture_date,
         expiry_date, quantity_received, stock_quantity, reserved_quantity,
@@ -1013,14 +992,14 @@ BEGIN
         p_expiry_date, p_quantity, p_quantity, 0,
         p_unit_cost, 'active'
     );
-
     SET v_batch_id = LAST_INSERT_ID();
 
+    -- 4. Log Physical Inventory Movement Ledger
     INSERT INTO stock_movements (batch_id, movement_type, quantity_changed, reason, performed_by)
-    VALUES (v_batch_id, 'RESTOCK', p_quantity, CONCAT('New shipment received. Lot: ', p_batch_number), p_received_by);
+    VALUES (v_batch_id, 'RESTOCK', p_quantity, CONCAT('Inbound Wholesale PO: ', v_invoice), p_received_by);
 
     COMMIT;
-    SELECT v_batch_id AS new_batch_id;
+    SELECT v_batch_id AS new_batch_id, v_purchase_id AS purchase_id, v_invoice AS invoice_number;
 END$$
 
 
@@ -1360,63 +1339,7 @@ BEGIN
 END$$
 
 
--- 3.10 Validate & Apply Promotional Voucher Coupon
-DROP PROCEDURE IF EXISTS sp_apply_promotional_coupon$$
-CREATE PROCEDURE sp_apply_promotional_coupon(
-    IN p_coupon_code VARCHAR(50),
-    IN p_order_subtotal DECIMAL(10,2),
-    OUT p_discount_amount DECIMAL(10,2),
-    OUT p_is_valid BOOLEAN,
-    OUT p_message VARCHAR(255)
-)
-BEGIN
-    DECLARE v_type ENUM('PERCENT', 'FIXED', 'FREE_DELIVERY');
-    DECLARE v_val DECIMAL(10,2);
-    DECLARE v_min DECIMAL(10,2);
-    DECLARE v_active BOOLEAN;
-    DECLARE v_from DATE;
-    DECLARE v_until DATE;
-
-    SELECT discount_type, discount_value, min_order_amount, is_active, valid_from, valid_until
-    INTO v_type, v_val, v_min, v_active, v_from, v_until
-    FROM promotions
-    WHERE code = UPPER(TRIM(p_coupon_code));
-
-    IF v_val IS NULL THEN
-        SET p_discount_amount = 0.00;
-        SET p_is_valid = FALSE;
-        SET p_message = 'Coupon code does not exist.';
-    ELSEIF v_active = FALSE THEN
-        SET p_discount_amount = 0.00;
-        SET p_is_valid = FALSE;
-        SET p_message = 'This promotional coupon has expired or is inactive.';
-    ELSEIF v_from IS NOT NULL AND v_from > CURDATE() THEN
-        SET p_discount_amount = 0.00;
-        SET p_is_valid = FALSE;
-        SET p_message = 'This promotion has not started yet.';
-    ELSEIF v_until IS NOT NULL AND v_until < CURDATE() THEN
-        SET p_discount_amount = 0.00;
-        SET p_is_valid = FALSE;
-        SET p_message = 'This promotion has expired.';
-    ELSEIF p_order_subtotal < v_min THEN
-        SET p_discount_amount = 0.00;
-        SET p_is_valid = FALSE;
-        SET p_message = CONCAT('Minimum subtotal of Rs. ', v_min, ' required to apply this coupon.');
-    ELSE
-        IF v_type = 'PERCENT' THEN
-            SET p_discount_amount = ROUND(p_order_subtotal * (v_val / 100.00), 2);
-        ELSEIF v_type = 'FIXED' THEN
-            SET p_discount_amount = LEAST(v_val, p_order_subtotal);
-        ELSE
-            SET p_discount_amount = 350.00; -- Standard courier fee waiver
-        END IF;
-        SET p_is_valid = TRUE;
-        SET p_message = 'Coupon applied successfully.';
-    END IF;
-END$$
-
-
--- 3.11 Resolve Patient Clinical Counseling Inquiry
+-- 3.10 Resolve Patient Clinical Counseling Inquiry
 DROP PROCEDURE IF EXISTS sp_process_inquiry_response$$
 CREATE PROCEDURE sp_process_inquiry_response(
     IN p_inquiry_id INT,
@@ -1587,23 +1510,18 @@ DELIMITER ;
 
 DELIMITER $$
 
--- 5.1 Daily Quarantine of Expired Physical Lots & Promotion Deactivation
+-- 5.1 Daily Quarantine of Expired Physical Lots
 DROP EVENT IF EXISTS ev_daily_quarantine_expired_batches$$
 CREATE EVENT ev_daily_quarantine_expired_batches
 ON SCHEDULE EVERY 1 DAY
 STARTS (TIMESTAMP(CURDATE()) + INTERVAL 1 DAY)
-COMMENT 'Automatically quarantines expired physical drug lots and deactivates expired promotions at midnight'
+COMMENT 'Automatically quarantines expired physical drug lots at midnight'
 DO
 BEGIN
     UPDATE medicine_batches
     SET status = 'quarantined'
     WHERE expiry_date <= CURDATE()
       AND status = 'active';
-
-    UPDATE promotions
-    SET is_active = FALSE
-    WHERE valid_until < CURDATE()
-      AND is_active = TRUE;
 END$$
 
 
@@ -1926,24 +1844,7 @@ INSERT INTO customers (customer_id, full_name, email, password_hash, contact_no,
 (5, 'Amanda Rodrigo', 'amanda.rodrigo@outlook.com', '$2a$10$7R53Yl5bX79d8y0/Hn86kO94kK2tQzV1Uu5w8r3.Yj8T9G1uM8tKy', '+94 70 444 1122', '28', '199611223344', '56 Beach Road, Mount Lavinia', TRUE, 'active')
 ON DUPLICATE KEY UPDATE full_name = VALUES(full_name);
 
--- 9. SEED PHARMACY SETTINGS
-INSERT INTO pharmacy_settings (setting_key, setting_value, description, is_public) VALUES
-('store_name', 'My Pharmacist / VDC Store Pharmacy', 'Official legal pharmacy name', TRUE),
-('tagline', 'Your Trusted Community Healthcare & Medicine Information Partner', 'Pharmacy branding slogan', TRUE),
-('phone_primary', '+94 11 234 5678', 'Main dispensary telephone helpline', TRUE),
-('phone_hotline', '+94 77 123 4567', '24/7 Pharmacist emergency inquiry hotline', TRUE),
-('email', 'info@vdcstore.lk', 'General inquiries email address', TRUE),
-('address_street', '124 Galle Road, Bambalapitiya', 'Physical premises address', TRUE),
-('address_city', 'Colombo 04, Sri Lanka', 'City and district', TRUE),
-('hours_weekday', '8:00 AM – 10:00 PM', 'Monday to Friday opening schedule', TRUE),
-('hours_saturday', '8:30 AM – 9:00 PM', 'Saturday opening schedule', TRUE),
-('hours_sunday', '9:00 AM – 6:00 PM', 'Sunday and Poya day opening schedule', TRUE),
-('announcement', 'Welcome to My Pharmacist. Licensed dispensary with cold-chain verified pharmaceutical stock.', 'Public alert banner', TRUE),
-('default_low_stock_threshold', '20', 'Internal stock alarm trigger level', FALSE),
-('system_version', '2.0.0-ADBMS', 'Software release identification', FALSE)
-ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value);
-
--- 10. SEED PURCHASES & PURCHASE ITEMS
+-- 9. SEED PURCHASES & PURCHASE ITEMS
 INSERT INTO purchases (purchase_id, supplier_id, invoice_number, purchase_date, total_amount, status, received_by, notes) VALUES
 (1, 1, 'PO-2026-001', DATE_SUB(CURDATE(), INTERVAL 14 DAY), 45000.00, 'RECEIVED', 'Chief Administrator', 'Quarterly antibiotic restock'),
 (2, 2, 'PO-2026-002', DATE_SUB(CURDATE(), INTERVAL 7 DAY), 62500.00, 'RECEIVED', 'Chief Administrator', 'Analgesics & cardiovascular formulations'),
@@ -1995,14 +1896,7 @@ INSERT INTO payments (payment_id, sale_id, payment_method, amount_paid, change_g
 (5, 5, 'CASH', 500.00, 80.00, 'Counter POS Cash Receipt #INV-2026-1005', NOW())
 ON DUPLICATE KEY UPDATE amount_paid = VALUES(amount_paid);
 
--- 12. SEED PROMOTIONS / COUPONS
-INSERT INTO promotions (promotion_id, code, title, description, discount_type, discount_value, min_order_amount, badge, category, tag, is_active, valid_from, valid_until) VALUES
-(1, 'IMMUNE15', 'Immune & Wellness Pack', 'Get 15% off high-potency Vitamin C, Zinc, and Multivitamin combinations this season.', 'PERCENT', 15.00, 1000.00, '15% OFF', 'Vitamins & Supplements', 'Trending Health Deal', TRUE, '2025-01-01', '2028-12-31'),
-(2, 'CARE50', 'Senior Citizen Chronic Care Delivery', 'Free dispensary doorstep courier service for monthly diabetes and blood pressure prescription refills.', 'FREE_DELIVERY', 0.00, 2500.00, 'FREE DELIVERY', 'Prescription Services', 'Dispensary Special', TRUE, '2025-01-01', '2028-12-31'),
-(3, 'HYGIENE20', 'Personal Care & Hygiene Essentials', 'Special bundle discounts on medical-grade antiseptic washes, masks, and sanitizers.', 'PERCENT', 20.00, 1500.00, 'FLAT 20% OFF', 'Personal Care', 'Counter Clearance', TRUE, '2025-01-01', '2028-12-31')
-ON DUPLICATE KEY UPDATE code = VALUES(code), discount_value = VALUES(discount_value);
-
--- 13. SEED CUSTOMER REVIEWS
+-- 12. SEED CUSTOMER REVIEWS
 INSERT INTO customer_reviews (review_id, customer_id, medicine_id, patient_name, role_title, rating, comment, category, is_verified, helpful_count, is_approved, avatar_color) VALUES
 (1, 3, 9, 'Dr. Senaka Wickramasinghe', 'Consultant Physician', 5, 
  'Exceptional inventory tracking. Being able to check real-time availability of specialized cardiac medications (Norvasc, Lipitor) before driving to the counter saved immense time for my patients.', 
@@ -2132,7 +2026,6 @@ GRANT SELECT ON pharmacy_db.v_monthly_sales TO 'pharmacy_auditor'@'localhost';
 GRANT SELECT ON pharmacy_db.v_sales_by_medicine TO 'pharmacy_auditor'@'localhost';
 GRANT SELECT ON pharmacy_db.v_payment_summary TO 'pharmacy_auditor'@'localhost';
 GRANT SELECT ON pharmacy_db.v_customer_purchase_history TO 'pharmacy_auditor'@'localhost';
-GRANT SELECT ON pharmacy_db.v_active_promotions TO 'pharmacy_auditor'@'localhost';
 GRANT SELECT ON pharmacy_db.v_approved_reviews TO 'pharmacy_auditor'@'localhost';
 GRANT SELECT ON pharmacy_db.v_supplier_order_performance TO 'pharmacy_auditor'@'localhost';
 GRANT SELECT ON pharmacy_db.v_prescription_fulfillment_pipeline TO 'pharmacy_auditor'@'localhost';

@@ -8,10 +8,9 @@ import {
 } from 'lucide-react';
 import MedicineCard from '../components/MedicineCard';
 import FeedbackSection from '../components/FeedbackSection';
-import { getMedicines, getCategories, getPublicSettings, getPromotions } from '../services/api';
+import { getMedicines, getCategories } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
 import { PHARMACY_IMAGES, getCategoryImage } from '../utils/pharmacyImages';
-import { SPECIAL_OFFERS } from '../utils/wellnessCatalog';
 
 // Icon mapping for database category icon names
 const iconMap = {
@@ -34,9 +33,7 @@ export default function HomePage({
   const [searchQuery, setSearchQuery] = useState('');
   const [featuredMedicines, setFeaturedMedicines] = useState([]);
   const [offerMedicines, setOfferMedicines] = useState([]);
-  const [promotions, setPromotions] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -46,21 +43,15 @@ export default function HomePage({
   const loadHomeData = async () => {
     try {
       setLoading(true);
-      const [medsRes, catRes, setRes, offerRes, promoRes] = await Promise.all([
+      const [medsRes, catRes, offerRes] = await Promise.all([
         getMedicines({ limit: 6, sortBy: 'name_asc' }),
         getCategories(),
-        getPublicSettings(),
-        getMedicines({ offersOnly: true, limit: 12 }),
-        getPromotions().catch(() => ({ success: false }))
+        getMedicines({ offersOnly: true, limit: 12 })
       ]);
 
       if (medsRes.success) setFeaturedMedicines(medsRes.data);
       if (catRes.success) setCategories(catRes.data);
-      if (setRes.success) setSettings(setRes.data);
       if (offerRes?.success) setOfferMedicines(offerRes.data || []);
-      if (promoRes?.success && promoRes.data?.length > 0) {
-        setPromotions(promoRes.data);
-      }
     } catch (err) {
       console.error('Failed to load homepage data:', err);
     } finally {
@@ -427,10 +418,10 @@ export default function HomePage({
                 <span>Special Offers & Health Deals</span>
               </div>
               <h2 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white">
-                Dispensary Seasonal Promotions
+                Dispensary Featured Offers & Deals
               </h2>
               <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mt-1">
-                Save on active promotional stock allocated directly by our pharmacy team.
+                Save on discounted medications and clearance stock allocated directly by our pharmacy team.
               </p>
             </div>
             <button
@@ -464,38 +455,6 @@ export default function HomePage({
               </p>
             </div>
           )}
-
-          {/* Promotional Coupon Vouchers (Loaded dynamically from MySQL promotions table) */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2 border-t border-amber-200/40 dark:border-slate-800/80">
-            {(promotions.length > 0 ? promotions : SPECIAL_OFFERS).map((offer) => (
-              <div
-                key={offer.promotion_id || offer.id || offer.code}
-                onClick={() => setActivePage('search', { query: 'offer' })}
-                className="p-5 rounded-2xl bg-white dark:bg-slate-950 border border-amber-200/60 dark:border-slate-800 shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="px-2.5 py-1 rounded-lg text-xs font-black bg-rose-500/10 text-rose-600 border border-rose-200 dark:border-rose-900">
-                      {offer.badge || 'SPECIAL OFFER'}
-                    </span>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                      Code: {offer.code}
-                    </span>
-                  </div>
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white mb-1">
-                    {offer.title}
-                  </h4>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mb-4">
-                    {offer.description}
-                  </p>
-                </div>
-                <div className="flex items-center justify-between text-[11px] font-bold text-teal-600 dark:text-teal-400 pt-2 border-t border-slate-100 dark:border-slate-800">
-                  <span>Shop Promotion</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
       </section>
 

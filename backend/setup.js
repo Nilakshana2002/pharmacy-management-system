@@ -169,7 +169,6 @@ async function runDatabaseSetup() {
         (SELECT COUNT(*) FROM payments) AS payments_count,
         (SELECT COUNT(*) FROM prescription_orders) AS prescription_orders_count,
         (SELECT COUNT(*) FROM prescription_files) AS prescription_files_count,
-        (SELECT COUNT(*) FROM promotions) AS promotions_count,
         (SELECT COUNT(*) FROM customer_reviews) AS reviews_count,
         (SELECT COUNT(*) FROM inquiries) AS inquiries_count,
         (SELECT COUNT(*) FROM notification_logs) AS notification_logs_count

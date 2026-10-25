@@ -175,14 +175,6 @@ erDiagram
         timestamp created_at
     }
 
-    PHARMACY_SETTINGS {
-        varchar setting_key PK
-        text setting_value
-        varchar description
-        boolean is_public
-        timestamp updated_at
-    }
-
     AUDIT_LOGS {
         int log_id PK
         varchar table_name
@@ -244,8 +236,8 @@ erDiagram
 - **Purpose:** Staff accounts with role-based access control (ADMIN, PHARMACIST, CASHIER) and bcrypt password hashing.
 - **Attributes:** `user_id` (PK), `username` (UK), `email` (UK), `password_hash`, `role`, `full_name`, `is_active`, `last_login`, `created_at`.
 
-### 2.11 `pharmacy_settings` & `audit_logs`
-- **Purpose:** Configurable pharmacy header metadata and trigger-generated historical snapshot log.
+### 2.11 `audit_logs`
+- **Purpose:** System-wide trigger-generated historical snapshot log tracking regulatory state changes.
 
 ---
 
