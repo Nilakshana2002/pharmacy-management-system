@@ -103,6 +103,10 @@ GRANT SELECT ON pharmacy_db.v_sales_by_medicine TO 'pharmacy_app'@'localhost';
 GRANT SELECT ON pharmacy_db.v_payment_summary TO 'pharmacy_app'@'localhost';
 GRANT SELECT ON pharmacy_db.v_approved_reviews TO 'pharmacy_app'@'localhost';
 GRANT SELECT ON pharmacy_db.v_customer_purchase_history TO 'pharmacy_app'@'localhost';
+GRANT SELECT ON pharmacy_db.v_supplier_order_performance TO 'pharmacy_app'@'localhost';
+GRANT SELECT ON pharmacy_db.v_prescription_fulfillment_pipeline TO 'pharmacy_app'@'localhost';
+GRANT SELECT ON pharmacy_db.v_pharmacist_dispensing_workload TO 'pharmacy_app'@'localhost';
+GRANT SELECT ON pharmacy_db.v_enriched_audit_feed TO 'pharmacy_app'@'localhost';
 
 -- Explicitly ensure NO DDL commands are permitted for the application user
 -- (DROP, ALTER, CREATE TABLE, TRUNCATE are blocked by design)
