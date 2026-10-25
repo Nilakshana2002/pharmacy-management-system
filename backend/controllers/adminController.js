@@ -14,19 +14,239 @@ import { ensureCustomersTable } from './customerController.js';
  * are all fully managed via database/schema.sql and seed.sql
  */
 export const ensureSalesTables = async () => {
+  if (salesTablesChecked) return;
+  salesTablesChecked = true;
   try {
-    await pool.query("UPDATE payments SET payment_method = 'CARD' WHERE payment_method NOT IN ('CASH', 'CARD')");
-    await pool.query("ALTER TABLE payments MODIFY COLUMN payment_method ENUM('CASH', 'CARD') NOT NULL DEFAULT 'CASH'");
-  } catch (migErr) {
-    // Column might already have the strict ENUM or constraint
+    // 1. Ensure sales table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sales (
+        sale_id INT AUTO_INCREMENT PRIMARY KEY,
+        invoice_number VARCHAR(60) NOT NULL UNIQUE,
+        user_id INT NULL,
+        patient_name VARCHAR(150) NOT NULL DEFAULT 'Walk-in Customer',
+        prescription_ref VARCHAR(100) NOT NULL DEFAULT 'OTC',
+        subtotal DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+        discount_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+        tax_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+        total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+        payment_status ENUM('PAID', 'PARTIAL', 'REFUNDED') NOT NULL DEFAULT 'PAID',
+        sale_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_sales_date (sale_date),
+        INDEX idx_sales_invoice (invoice_number)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 2. Ensure sale_items table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sale_items (
+        sale_item_id INT AUTO_INCREMENT PRIMARY KEY,
+        sale_id INT NOT NULL,
+        medicine_id INT NOT NULL,
+        quantity INT NOT NULL,
+        unit_price DECIMAL(10, 2) NOT NULL,
+        subtotal DECIMAL(10, 2) NOT NULL,
+        packaging_desc VARCHAR(100) DEFAULT '1 Unit',
+        INDEX idx_sale_items_sale (sale_id),
+        INDEX idx_sale_items_medicine (medicine_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 3. Ensure sale_item_batches table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sale_item_batches (
+        allocation_id INT AUTO_INCREMENT PRIMARY KEY,
+        sale_item_id INT NOT NULL,
+        batch_id INT NOT NULL,
+        quantity_allocated INT NOT NULL,
+        INDEX idx_alloc_sale_item (sale_item_id),
+        INDEX idx_alloc_batch (batch_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 4. Ensure payments table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS payments (
+        payment_id INT AUTO_INCREMENT PRIMARY KEY,
+        sale_id INT NOT NULL,
+        payment_method ENUM('CASH', 'CARD', 'ONLINE', 'INSURANCE') NOT NULL DEFAULT 'CASH',
+        amount_paid DECIMAL(10, 2) NOT NULL,
+        change_given DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+        reference_note VARCHAR(150),
+        payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_payments_sale (sale_id),
+        INDEX idx_payments_method (payment_method)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 5. Ensure stock_movements table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS stock_movements (
+        movement_id INT AUTO_INCREMENT PRIMARY KEY,
+        batch_id INT NOT NULL,
+        movement_type ENUM('RESTOCK', 'DISPENSED', 'ADJUSTMENT', 'RECALL', 'EXPIRED_DISCARD') NOT NULL,
+        quantity_changed INT NOT NULL,
+        reason VARCHAR(255),
+        performed_by VARCHAR(100) DEFAULT 'System',
+        movement_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_movements_batch (batch_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 6. Ensure audit_logs table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        log_id INT AUTO_INCREMENT PRIMARY KEY,
+        table_name VARCHAR(50) NOT NULL,
+        operation ENUM('INSERT', 'UPDATE', 'DELETE') NOT NULL,
+        record_id INT NOT NULL,
+        old_value JSON,
+        new_value JSON,
+        performed_by VARCHAR(100) DEFAULT 'System Trigger',
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_audit_table (table_name)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // Ensure customer_id column in sales table for patient foreign key relationship
+    try {
+      const [colCust] = await pool.query("SHOW COLUMNS FROM sales LIKE 'customer_id'");
+      if (colCust.length === 0) {
+        await pool.query("ALTER TABLE sales ADD COLUMN customer_id INT NULL");
+        console.log('[Admin Service Migration]: Added customer_id foreign key attribute to sales table');
+      }
+    } catch (migErr) {
+      console.warn('[Sales Migration customer_id Notice]:', migErr.message);
+    }
+
+    // 7. Ensure promotions table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS promotions (
+        promotion_id INT AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(50) NOT NULL UNIQUE,
+        title VARCHAR(150) NOT NULL,
+        description TEXT,
+        discount_type ENUM('PERCENT', 'FIXED', 'FREE_DELIVERY') NOT NULL DEFAULT 'PERCENT',
+        discount_value DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+        min_order_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+        badge VARCHAR(50) DEFAULT 'SPECIAL OFFER',
+        category VARCHAR(100) DEFAULT 'General',
+        tag VARCHAR(100) DEFAULT 'Active Deal',
+        is_active BOOLEAN DEFAULT TRUE,
+        valid_from DATE NULL,
+        valid_until DATE NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_promotions_code (code)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 8. Ensure customer_reviews table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS customer_reviews (
+        review_id INT AUTO_INCREMENT PRIMARY KEY,
+        customer_id INT NULL,
+        medicine_id INT NULL,
+        patient_name VARCHAR(150) NOT NULL,
+        role_title VARCHAR(100) DEFAULT 'Verified Patient',
+        rating INT NOT NULL,
+        comment TEXT NOT NULL,
+        category VARCHAR(100) DEFAULT 'General Healthcare',
+        is_verified BOOLEAN DEFAULT TRUE,
+        helpful_count INT DEFAULT 0,
+        is_approved BOOLEAN DEFAULT TRUE,
+        avatar_color VARCHAR(100) DEFAULT 'from-blue-600 to-indigo-600',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_reviews_approved (is_approved, created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 9. Ensure inquiries table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS inquiries (
+        inquiry_id INT AUTO_INCREMENT PRIMARY KEY,
+        reference_code VARCHAR(50) NOT NULL UNIQUE,
+        customer_id INT NULL,
+        name VARCHAR(150) NOT NULL,
+        phone VARCHAR(50),
+        email VARCHAR(150),
+        medicine_query VARCHAR(200),
+        message TEXT NOT NULL,
+        status ENUM('NEW', 'IN_REVIEW', 'RESOLVED') NOT NULL DEFAULT 'NEW',
+        staff_notes TEXT NULL,
+        responded_by VARCHAR(100) NULL,
+        responded_at DATETIME NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_inquiries_ref (reference_code),
+        INDEX idx_inquiries_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 10. Ensure notification_logs table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notification_logs (
+        notification_id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id VARCHAR(50) NULL,
+        customer_id INT NULL,
+        recipient_email VARCHAR(150) NOT NULL,
+        recipient_name VARCHAR(150),
+        subject VARCHAR(255) NOT NULL,
+        message_body TEXT NOT NULL,
+        notification_type ENUM('PRESCRIPTION_ACCEPTED', 'PRESCRIPTION_REJECTED', 'PRESCRIPTION_RECEIVED', 'INQUIRY_RECEIVED', 'PROMOTIONAL', 'SYSTEM') DEFAULT 'SYSTEM',
+        status ENUM('SENT', 'FAILED', 'PENDING') DEFAULT 'SENT',
+        error_message TEXT NULL,
+        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_notif_order (order_id),
+        INDEX idx_notif_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 7. Check if sales table has records; if empty, seed baseline historical sales
+    const [salesCount] = await pool.query('SELECT COUNT(*) AS cnt FROM sales');
+    if (salesCount[0].cnt === 0) {
+      console.log('[Admin Service] Seeding initial sales transactions for reports & analytics...');
+      await pool.query(`
+        INSERT INTO sales (sale_id, invoice_number, user_id, patient_name, prescription_ref, subtotal, discount_amount, tax_amount, total_amount, payment_status, sale_date) VALUES
+        (1, 'INV-2026-1001', NULL, 'Mrs. Champa Wickramasinghe', 'RX-SLMC-4921', 1850.00, 0.00, 0.00, 1850.00, 'PAID', DATE_SUB(NOW(), INTERVAL 3 DAY)),
+        (2, 'INV-2026-1002', NULL, 'Mr. Roshan De Silva', 'OTC-Walk-in', 150.00, 0.00, 0.00, 150.00, 'PAID', DATE_SUB(NOW(), INTERVAL 2 DAY)),
+        (3, 'INV-2026-1003', NULL, 'Dr. Samantha Perera', 'RX-SLMC-8812', 3450.00, 0.00, 0.00, 3450.00, 'PAID', DATE_SUB(NOW(), INTERVAL 1 DAY)),
+        (4, 'INV-2026-1004', NULL, 'Mr. Nuwan Jayasuriya', 'RX-SLMC-1204', 1280.00, 0.00, 0.00, 1280.00, 'PAID', NOW()),
+        (5, 'INV-2026-1005', NULL, 'Walk-in Customer', 'OTC-Walk-in', 420.00, 0.00, 0.00, 420.00, 'PAID', NOW())
+        ON DUPLICATE KEY UPDATE sale_id = VALUES(sale_id);
+      `);
+
+      const [medRows] = await pool.query('SELECT medicine_id FROM medicines LIMIT 2');
+      const med1 = medRows[0]?.medicine_id || 1;
+      const med2 = medRows[1]?.medicine_id || med1;
+
+      await pool.query(`
+        INSERT IGNORE INTO sale_items (sale_item_id, sale_id, medicine_id, quantity, unit_price, subtotal, packaging_desc) VALUES
+        (1, 1, ?, 10, 185.00, 1850.00, '1 Card (10 Tablets)'),
+        (2, 2, ?, 20, 7.50, 150.00, '2 Cards (20 Tablets)'),
+        (3, 3, ?, 2, 1250.00, 2500.00, '2 Canisters (Inhalers)'),
+        (4, 3, ?, 10, 7.50, 75.00, '1 Card (10 Tablets)'),
+        (5, 3, ?, 4, 185.00, 740.00, '4 Loose Tablets'),
+        (6, 4, ?, 20, 64.00, 1280.00, '2 Cards (20 Tablets)'),
+        (7, 5, ?, 10, 42.00, 420.00, '1 Card (10 Capsules)');
+      `, [med1, med2, med1, med2, med1, med2, med1]);
+
+      await pool.query(`
+        INSERT IGNORE INTO payments (payment_id, sale_id, payment_method, amount_paid, change_given, reference_note, payment_date) VALUES
+        (1, 1, 'CASH', 2000.00, 150.00, 'Counter POS Cash Receipt #INV-2026-1001', DATE_SUB(NOW(), INTERVAL 3 DAY)),
+        (2, 2, 'CASH', 200.00, 50.00, 'Counter POS Cash Receipt #INV-2026-1002', DATE_SUB(NOW(), INTERVAL 2 DAY)),
+        (3, 3, 'CARD', 3450.00, 0.00, 'POS Visa Auth #984210 #INV-2026-1003', DATE_SUB(NOW(), INTERVAL 1 DAY)),
+        (4, 4, 'CARD', 1280.00, 0.00, 'POS Master Auth #441920 #INV-2026-1004', NOW()),
+        (5, 5, 'CASH', 500.00, 80.00, 'Counter POS Cash Receipt #INV-2026-1005', NOW());
+      `);
+    }
+
+    // Auto-sync any orphaned POS transactions from previous migrations or fallback executions
+    await syncOrphanedPosMovements();
+
+    salesTablesChecked = true;
+    console.log('[Admin Service] Sales & reporting database tables verified and operational.');
+  } catch (err) {
+    console.warn('[Admin Service Table Check Notice]:', err.message);
   }
-  try {
-    await pool.query("DROP VIEW IF EXISTS v_active_promotions");
-    await pool.query("DROP TABLE IF EXISTS promotions");
-  } catch (dropErr) {
-    // Table or view might already be dropped
-  }
-  return true;
 };
 
 /**

@@ -4,11 +4,75 @@ import pool from '../config/db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'vdc_store_jwt_super_secret_key_2026_adbms';
 
+let customersTableChecked = false;
+
 /**
  * Customers table is managed via database/schema.sql and seed.sql
  */
 export const ensureCustomersTable = async () => {
-  return true;
+  if (customersTableChecked) return;
+  customersTableChecked = true;
+  try {
+    const createTableSql = `
+      CREATE TABLE IF NOT EXISTS customers (
+        customer_id INT AUTO_INCREMENT PRIMARY KEY,
+        full_name VARCHAR(150) NOT NULL,
+        email VARCHAR(150) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        contact_no VARCHAR(50),
+        patient_age VARCHAR(50),
+        nic VARCHAR(50),
+        address TEXT,
+        is_active BOOLEAN DEFAULT TRUE,
+        status VARCHAR(20) DEFAULT 'active',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `;
+    await pool.query(createTableSql);
+
+    // Migration Check: Ensure is_active column exists
+    try {
+      const [colActive] = await pool.query("SHOW COLUMNS FROM customers LIKE 'is_active'");
+      if (colActive.length === 0) {
+        await pool.query("ALTER TABLE customers ADD COLUMN is_active BOOLEAN DEFAULT TRUE");
+        console.log('[Customers Table Migration]: Added is_active column');
+      }
+    } catch {
+      // ignore
+    }
+
+    // Migration Check: Ensure status column exists
+    try {
+      const [colStatus] = await pool.query("SHOW COLUMNS FROM customers LIKE 'status'");
+      if (colStatus.length === 0) {
+        await pool.query("ALTER TABLE customers ADD COLUMN status VARCHAR(20) DEFAULT 'active'");
+        console.log('[Customers Table Migration]: Added status column');
+      }
+    } catch {
+      // ignore
+    }
+
+    // Seed default customer if empty
+    const [countRows] = await pool.query('SELECT COUNT(*) AS total FROM customers');
+    if (countRows[0].total === 0) {
+      const hashedDemo = await bcrypt.hash('password123', 10);
+      await pool.query(`
+        INSERT INTO customers (full_name, email, password_hash, contact_no, patient_age, nic, address, is_active, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, 'active')
+      `, [
+        'Kasun Perera',
+        'kasun.perera@gmail.com',
+        hashedDemo,
+        '+94 77 123 4567',
+        '38 Yrs',
+        '942150821V',
+        'No 45/2, Havelock Road, Colombo 05'
+      ]);
+      console.log('[Customers]: Seeded initial demo customer Kasun Perera');
+    }
+  } catch {
+    // Schema is managed via database/schema.sql; DDL is intentionally denied to app user under least-privilege
+  }
 };
 
 /**
