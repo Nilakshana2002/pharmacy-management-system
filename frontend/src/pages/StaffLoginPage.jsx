@@ -51,10 +51,10 @@ export default function StaffLoginPage({ onLoginSuccess, setActivePage }) {
   const autofill = (userType) => {
     if (activeCustomer) return;
     if (userType === 'admin') {
-      setIdentifier('admin@vdcstore.com');
+      setIdentifier('admin@vdcstore.lk');
       setPassword('admin123');
     } else {
-      setIdentifier('pharmacist@vdcstore.com');
+      setIdentifier('pharmacist@vdcstore.lk');
       setPassword('pharma123');
     }
   };

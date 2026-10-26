@@ -21,24 +21,32 @@ export const login = async (req, res) => {
 
     const trimmedIdentifier = identifier.trim();
 
-    // Lookup user by username or email
-    let rows;
+    // Generate normalized lookup candidates (support .com, .lk, and direct usernames)
+    let altIdentifier = trimmedIdentifier;
+    if (trimmedIdentifier.endsWith('@vdcstore.com')) {
+      altIdentifier = trimmedIdentifier.replace('@vdcstore.com', '@vdcstore.lk');
+    } else if (trimmedIdentifier.endsWith('@vdcstore.lk')) {
+      altIdentifier = trimmedIdentifier.replace('@vdcstore.lk', '@vdcstore.com');
+    }
+
+    let inferredUsername = trimmedIdentifier;
+    if (trimmedIdentifier.includes('@')) {
+      inferredUsername = trimmedIdentifier.split('@')[0];
+    }
+
+    // Lookup user by username, email, or alternate domain
+    let rows = [];
+    const selectSql = `
+      SELECT user_id, username, email, password_hash, role, full_name, is_active
+      FROM users
+      WHERE (username = ? OR email = ? OR email = ? OR username = ?)
+      LIMIT 1
+    `;
+
     try {
-      const sql = `
-        SELECT user_id, username, email, password_hash, role, full_name, is_active, permissions
-        FROM users
-        WHERE (username = ? OR email = ?)
-        LIMIT 1
-      `;
-      [rows] = await pool.query(sql, [trimmedIdentifier, trimmedIdentifier]);
-    } catch {
-      const sql = `
-        SELECT user_id, username, email, password_hash, role, full_name, is_active
-        FROM users
-        WHERE (username = ? OR email = ?)
-        LIMIT 1
-      `;
-      [rows] = await pool.query(sql, [trimmedIdentifier, trimmedIdentifier]);
+      [rows] = await pool.query(selectSql, [trimmedIdentifier, trimmedIdentifier, altIdentifier, inferredUsername]);
+    } catch (queryErr) {
+      console.warn('[User query error]:', queryErr.message);
     }
 
     // If no user found, auto-seed default staff accounts if users table exists
@@ -48,14 +56,18 @@ export const login = async (req, res) => {
         const hashedPharma = await bcrypt.hash('pharma123', 10);
 
         await pool.query(`
-          INSERT IGNORE INTO users (user_id, username, email, password_hash, role, full_name, is_active)
+          INSERT INTO users (user_id, username, email, password_hash, role, full_name, is_active)
           VALUES 
-            (1, 'admin', 'admin@vdcstore.com', ?, 'ADMIN', 'Chief Pharmacy Administrator', TRUE),
-            (2, 'pharmacist', 'pharmacist@vdcstore.com', ?, 'PHARMACIST', 'Licensed Staff Pharmacist', TRUE)
+            (1, 'admin', 'admin@vdcstore.lk', ?, 'ADMIN', 'Chief Pharmacy Administrator', TRUE),
+            (2, 'pharmacist', 'pharmacist@vdcstore.lk', ?, 'PHARMACIST', 'Licensed Staff Pharmacist', TRUE)
+          ON DUPLICATE KEY UPDATE 
+            password_hash = VALUES(password_hash),
+            email = VALUES(email),
+            is_active = TRUE
         `, [hashedAdmin, hashedPharma]);
 
         // Retry lookup
-        const [recheckRows] = await pool.query(sql, [trimmedIdentifier, trimmedIdentifier]);
+        const [recheckRows] = await pool.query(selectSql, [trimmedIdentifier, trimmedIdentifier, altIdentifier, inferredUsername]);
         if (recheckRows.length > 0) {
           rows = recheckRows;
         }
