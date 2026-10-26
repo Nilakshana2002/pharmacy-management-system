@@ -689,18 +689,39 @@ SELECT
     b.batch_number,
     m.medicine_id,
     m.name AS medicine_name,
-    b.stock_quantity,
-    b.expiry_date,
-    DATEDIFF(b.expiry_date, CURDATE()) AS days_to_expiry,
+    m.generic_name,
     s.supplier_name,
-    b.status
+    b.expiry_date,
+    fn_calculate_batch_remaining_days(b.batch_id) AS days_to_expiry,
+    fn_calculate_batch_remaining_days(b.batch_id) AS days_until_expiry,
+    b.stock_quantity,
+    b.unit_cost,
+    (b.stock_quantity * b.unit_cost) AS total_at_risk_value,
+    b.status,
+    CASE 
+        WHEN fn_is_batch_expired(b.batch_id) THEN 'EXPIRED'
+        WHEN fn_calculate_batch_remaining_days(b.batch_id) <= 30 THEN 'CRITICAL (<= 30 Days)'
+        WHEN fn_calculate_batch_remaining_days(b.batch_id) <= 60 THEN 'WARNING (<= 60 Days)'
+        ELSE 'NOTICE (<= 90 Days)'
+    END AS risk_level,
+    CASE
+        WHEN b.status = 'quarantined' THEN 'Quarantined — Awaiting destruction or supplier credit'
+        WHEN fn_is_batch_expired(b.batch_id) THEN 'EXPIRED — Immediate Quarantine & Disposal Required'
+        WHEN fn_calculate_batch_remaining_days(b.batch_id) <= 30 THEN 'CRITICAL (30d) — Priority FEFO Dispense or Return'
+        ELSE 'FEFO Watchlist (90d) — Shelf Stock Rotation'
+    END AS action_required,
+    CASE
+        WHEN b.status = 'quarantined' THEN 'QUARANTINED'
+        WHEN fn_is_batch_expired(b.batch_id) THEN 'EXPIRED'
+        WHEN fn_calculate_batch_remaining_days(b.batch_id) <= 30 THEN 'CRITICAL'
+        ELSE 'EXPIRING_SOON'
+    END AS urgency_level
 FROM medicine_batches b
 INNER JOIN medicines m ON b.medicine_id = m.medicine_id
 INNER JOIN suppliers s ON b.supplier_id = s.supplier_id
-WHERE b.stock_quantity > 0 
-  AND b.expiry_date <= DATE_ADD(CURDATE(), INTERVAL 90 DAY)
-  AND b.status = 'active'
-ORDER BY b.expiry_date ASC;
+WHERE (b.stock_quantity > 0 AND b.expiry_date <= DATE_ADD(CURDATE(), INTERVAL 90 DAY))
+   OR b.status = 'quarantined'
+   OR (b.stock_quantity > 0 AND b.expiry_date <= CURDATE());
 
 -- View 5: Daily Sales Analytics
 DROP VIEW IF EXISTS v_daily_sales;

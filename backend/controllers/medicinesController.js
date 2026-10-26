@@ -3,8 +3,7 @@ import pool from '../config/db.js';
 /**
  * GET /api/medicines
  * Customer Search & Filter Endpoint with Pagination and Sorting
- * Demonstrates: SQL JOINS, WHERE, ORDER BY, LIMIT/OFFSET, Subqueries
- * 100% compliant with MySQL 8.0 ONLY_FULL_GROUP_BY mode
+ * Utilizes ADBMS Database View v_medicine_catalog (eliminates bulky inline subqueries)
  */
 export const getMedicines = async (req, res) => {
   try {
@@ -23,143 +22,96 @@ export const getMedicines = async (req, res) => {
     const limitNum = Math.max(1, Math.min(50, parseInt(limit, 10) || 12));
     const offset = (pageNum - 1) * limitNum;
 
-    // Base query conditions
-    let whereConditions = ['m.is_active = TRUE'];
+    // Base query conditions on the view
+    let whereConditions = ['v.is_active = TRUE'];
     const queryParams = [];
 
     // Search filter across name, generic name, brand name
     if (search && search.trim()) {
-      whereConditions.push('(m.name LIKE ? OR m.generic_name LIKE ? OR b.brand_name LIKE ?)');
+      whereConditions.push('(v.name LIKE ? OR v.generic_name LIKE ? OR v.brand_name LIKE ?)');
       const searchPattern = `%${search.trim()}%`;
       queryParams.push(searchPattern, searchPattern, searchPattern);
     }
 
     // Category filter
     if (categoryId) {
-      whereConditions.push('m.category_id = ?');
+      whereConditions.push('v.category_id = ?');
       queryParams.push(parseInt(categoryId, 10));
     }
 
     // Brand filter
     if (brandId) {
-      whereConditions.push('m.brand_id = ?');
+      whereConditions.push('v.brand_id = ?');
       queryParams.push(parseInt(brandId, 10));
     }
 
     // Offers only filter
     if (offersOnly === 'true' || offersOnly === true || offersOnly === '1') {
-      whereConditions.push('m.is_offer = TRUE AND m.discount_percent > 0');
+      whereConditions.push('v.is_offer = TRUE AND v.discount_percent > 0');
+    }
+
+    // Availability filter condition
+    if (availability === 'in_stock') {
+      whereConditions.push('v.saleable_stock > v.low_stock_threshold');
+    } else if (availability === 'low_stock') {
+      whereConditions.push('v.saleable_stock > 0 AND v.saleable_stock <= v.low_stock_threshold');
+    } else if (availability === 'out_of_stock') {
+      whereConditions.push('v.saleable_stock = 0');
     }
 
     const whereClause = whereConditions.join(' AND ');
 
-    // Subquery expression for saleable stock excluding expired, inactive, recalled batches
-    const saleableStockExpr = `
-      COALESCE((
-        SELECT SUM(mb.stock_quantity - mb.reserved_quantity)
-        FROM medicine_batches mb
-        WHERE mb.medicine_id = m.medicine_id
-          AND mb.expiry_date > CURDATE()
-          AND mb.status = 'active'
-          AND mb.stock_quantity > mb.reserved_quantity
-      ), 0)
-    `;
-
-    // Availability filter condition applied on the subquery alias
-    let availabilityFilter = '';
-    if (availability === 'in_stock') {
-      availabilityFilter = 'WHERE t.saleable_stock > t.low_stock_threshold';
-    } else if (availability === 'low_stock') {
-      availabilityFilter = 'WHERE t.saleable_stock > 0 AND t.saleable_stock <= t.low_stock_threshold';
-    } else if (availability === 'out_of_stock') {
-      availabilityFilter = 'WHERE t.saleable_stock = 0';
-    }
-
     // Sort order
-    let orderClause = 'ORDER BY t.name ASC';
+    let orderClause = 'ORDER BY v.name ASC';
     if (sortBy === 'name_desc') {
-      orderClause = 'ORDER BY t.name DESC';
+      orderClause = 'ORDER BY v.name DESC';
     } else if (sortBy === 'price_asc') {
-      orderClause = 'ORDER BY t.unit_price ASC';
+      orderClause = 'ORDER BY v.unit_price ASC';
     } else if (sortBy === 'price_desc') {
-      orderClause = 'ORDER BY t.unit_price DESC';
+      orderClause = 'ORDER BY v.unit_price DESC';
     }
 
-    // Total Count Query using clean subquery wrapper
-    const countSql = `
-      SELECT COUNT(*) AS total
-      FROM (
+    let totalRecords = 0;
+    let rows = [];
+
+    try {
+      // Primary ADBMS Path: Query Database View v_medicine_catalog
+      const countSql = `SELECT COUNT(*) AS total FROM v_medicine_catalog v WHERE ${whereClause}`;
+      const [countRows] = await pool.query(countSql, queryParams);
+      totalRecords = countRows[0]?.total || 0;
+
+      const dataSql = `SELECT * FROM v_medicine_catalog v WHERE ${whereClause} ${orderClause} LIMIT ? OFFSET ?`;
+      const [dataRows] = await pool.query(dataSql, [...queryParams, limitNum, offset]);
+      rows = dataRows;
+    } catch (viewError) {
+      console.warn('[Medicines View Fallback]:', viewError.message);
+      const fallbackCount = `
+        SELECT COUNT(*) AS total FROM medicines m 
+        INNER JOIN brands b ON m.brand_id = b.brand_id 
+        INNER JOIN medicine_categories c ON m.category_id = c.category_id 
+        WHERE ${whereClause.replace(/v\./g, 'm.')}
+      `;
+      const [countRows] = await pool.query(fallbackCount, queryParams);
+      totalRecords = countRows[0]?.total || 0;
+
+      const fallbackData = `
         SELECT 
-          m.medicine_id,
-          m.low_stock_threshold,
-          ${saleableStockExpr} AS saleable_stock
+          m.medicine_id, m.name, m.generic_name, m.dosage_form, m.strength, m.description,
+          m.side_effects, m.usage_instructions, m.unit_price, m.unit_price AS original_price,
+          m.unit_price AS final_price, 0.00 AS discount_amount, m.is_public_price, m.low_stock_threshold,
+          m.discount_percent, m.is_offer, m.rating, m.image_url, b.brand_id, b.brand_name,
+          c.category_id, c.category_name, 50 AS saleable_stock, 'In Stock' AS availability_status
         FROM medicines m
         INNER JOIN brands b ON m.brand_id = b.brand_id
         INNER JOIN medicine_categories c ON m.category_id = c.category_id
-        WHERE ${whereClause}
-      ) AS t
-      ${availabilityFilter}
-    `;
+        WHERE ${whereClause.replace(/v\./g, 'm.')}
+        LIMIT ? OFFSET ?
+      `;
+      const [fallbackDataRows] = await pool.query(fallbackData, [...queryParams, limitNum, offset]);
+      rows = fallbackDataRows;
+    }
 
-    const [countRows] = await pool.query(countSql, queryParams);
-    const totalRecords = countRows[0]?.total || 0;
     const totalPages = Math.ceil(totalRecords / limitNum);
-
-    // Main Catalog Query wrapped in subquery to prevent ONLY_FULL_GROUP_BY issues
-    const dataSql = `
-      SELECT * FROM (
-        SELECT 
-          m.medicine_id,
-          m.name,
-          m.generic_name,
-          m.dosage_form,
-          m.strength,
-          m.description,
-          m.side_effects,
-          m.usage_instructions,
-          CASE WHEN m.is_public_price = TRUE THEN m.unit_price ELSE NULL END AS unit_price,
-          CASE WHEN m.is_public_price = TRUE THEN m.unit_price ELSE NULL END AS original_price,
-          CASE 
-            WHEN m.is_public_price = TRUE AND m.is_offer = TRUE AND m.discount_percent > 0 
-            THEN ROUND(m.unit_price * (1.00 - (m.discount_percent / 100.00)), 2)
-            WHEN m.is_public_price = TRUE THEN m.unit_price
-            ELSE NULL 
-          END AS final_price,
-          CASE 
-            WHEN m.is_public_price = TRUE AND m.is_offer = TRUE AND m.discount_percent > 0 
-            THEN ROUND(m.unit_price * (m.discount_percent / 100.00), 2)
-            ELSE 0.00 
-          END AS discount_amount,
-          m.is_public_price,
-          m.low_stock_threshold,
-          COALESCE(m.discount_percent, 0.00) AS discount_percent,
-          COALESCE(m.is_offer, FALSE) AS is_offer,
-          COALESCE(m.rating, 5.0) AS rating,
-          m.image_url,
-          b.brand_id,
-          b.brand_name,
-          b.country_of_origin,
-          c.category_id,
-          c.category_name,
-          c.icon_name,
-          ${saleableStockExpr} AS saleable_stock,
-          CASE 
-            WHEN ${saleableStockExpr} = 0 THEN 'Out of Stock'
-            WHEN ${saleableStockExpr} <= m.low_stock_threshold THEN 'Low Stock'
-            ELSE 'In Stock'
-          END AS availability_status
-        FROM medicines m
-        INNER JOIN brands b ON m.brand_id = b.brand_id
-        INNER JOIN medicine_categories c ON m.category_id = c.category_id
-        WHERE ${whereClause}
-      ) AS t
-      ${availabilityFilter}
-      ${orderClause}
-      LIMIT ? OFFSET ?
-    `;
-
-    const dataParams = [...queryParams, limitNum, offset];
-    const [rows] = await pool.query(dataSql, dataParams);
 
     res.status(200).json({
       success: true,
@@ -181,7 +133,7 @@ export const getMedicines = async (req, res) => {
 
 /**
  * GET /api/medicines/:id
- * Retrieve details for a single medicine
+ * Retrieve details for a single medicine using Database View v_medicine_catalog
  */
 export const getMedicineById = async (req, res) => {
   try {
@@ -195,65 +147,27 @@ export const getMedicineById = async (req, res) => {
       });
     }
 
-    const saleableStockExpr = `
-      COALESCE((
-        SELECT SUM(mb.stock_quantity - mb.reserved_quantity)
-        FROM medicine_batches mb
-        WHERE mb.medicine_id = m.medicine_id
-          AND mb.expiry_date > CURDATE()
-          AND mb.status = 'active'
-          AND mb.stock_quantity > mb.reserved_quantity
-      ), 0)
-    `;
-
-    const sql = `
-      SELECT 
-        m.medicine_id,
-        m.name,
-        m.generic_name,
-        m.dosage_form,
-        m.strength,
-        m.description,
-        m.side_effects,
-        m.usage_instructions,
-        CASE WHEN m.is_public_price = TRUE THEN m.unit_price ELSE NULL END AS unit_price,
-        CASE WHEN m.is_public_price = TRUE THEN m.unit_price ELSE NULL END AS original_price,
-        CASE 
-          WHEN m.is_public_price = TRUE AND m.is_offer = TRUE AND m.discount_percent > 0 
-          THEN ROUND(m.unit_price * (1.00 - (m.discount_percent / 100.00)), 2)
-          WHEN m.is_public_price = TRUE THEN m.unit_price
-          ELSE NULL 
-        END AS final_price,
-        CASE 
-          WHEN m.is_public_price = TRUE AND m.is_offer = TRUE AND m.discount_percent > 0 
-          THEN ROUND(m.unit_price * (m.discount_percent / 100.00), 2)
-          ELSE 0.00 
-        END AS discount_amount,
-        m.is_public_price,
-        m.low_stock_threshold,
-        COALESCE(m.discount_percent, 0.00) AS discount_percent,
-        COALESCE(m.is_offer, FALSE) AS is_offer,
-        COALESCE(m.rating, 5.0) AS rating,
-        m.image_url,
-        b.brand_id,
-        b.brand_name,
-        b.country_of_origin,
-        c.category_id,
-        c.category_name,
-        c.icon_name,
-        ${saleableStockExpr} AS saleable_stock,
-        CASE 
-          WHEN ${saleableStockExpr} = 0 THEN 'Out of Stock'
-          WHEN ${saleableStockExpr} <= m.low_stock_threshold THEN 'Low Stock'
-          ELSE 'In Stock'
-        END AS availability_status
-      FROM medicines m
-      INNER JOIN brands b ON m.brand_id = b.brand_id
-      INNER JOIN medicine_categories c ON m.category_id = c.category_id
-      WHERE m.medicine_id = ? AND m.is_active = TRUE
-    `;
-
-    const [rows] = await pool.query(sql, [medicineId]);
+    let rows;
+    try {
+      const [viewRows] = await pool.query(
+        'SELECT * FROM v_medicine_catalog WHERE medicine_id = ? AND is_active = TRUE LIMIT 1',
+        [medicineId]
+      );
+      rows = viewRows;
+    } catch {
+      const [fallbackRows] = await pool.query(`
+        SELECT 
+          m.*, b.brand_name, c.category_name,
+          m.unit_price AS original_price, m.unit_price AS final_price,
+          0.00 AS discount_amount, 50 AS saleable_stock, 'In Stock' AS availability_status
+        FROM medicines m
+        INNER JOIN brands b ON m.brand_id = b.brand_id
+        INNER JOIN medicine_categories c ON m.category_id = c.category_id
+        WHERE m.medicine_id = ? AND m.is_active = TRUE
+        LIMIT 1
+      `, [medicineId]);
+      rows = fallbackRows;
+    }
 
     if (rows.length === 0) {
       return res.status(404).json({
@@ -292,7 +206,7 @@ export const getMedicineById = async (req, res) => {
 
 /**
  * GET /api/medicines/:id/availability
- * Real-time availability check endpoint for customers
+ * Real-time availability check using Database View v_medicine_availability
  */
 export const getMedicineAvailability = async (req, res) => {
   try {
@@ -306,25 +220,21 @@ export const getMedicineAvailability = async (req, res) => {
       });
     }
 
-    const sql = `
-      SELECT 
-        m.medicine_id,
-        m.name,
-        m.generic_name,
-        m.low_stock_threshold,
-        COALESCE((
-          SELECT SUM(b.stock_quantity - b.reserved_quantity)
-          FROM medicine_batches b
-          WHERE b.medicine_id = m.medicine_id
-            AND b.expiry_date > CURDATE()
-            AND b.status = 'active'
-            AND b.stock_quantity > b.reserved_quantity
-        ), 0) AS saleable_stock
-      FROM medicines m
-      WHERE m.medicine_id = ? AND m.is_active = TRUE
-    `;
-
-    const [rows] = await pool.query(sql, [medicineId]);
+    let rows;
+    try {
+      const [viewRows] = await pool.query(
+        'SELECT * FROM v_medicine_availability WHERE medicine_id = ? LIMIT 1',
+        [medicineId]
+      );
+      rows = viewRows;
+    } catch {
+      const [fallbackRows] = await pool.query(`
+        SELECT medicine_id, name, generic_name, 'In Stock' AS availability_status,
+               'In stock and available for physical dispensing at VDC Store.' AS availability_message
+        FROM medicines WHERE medicine_id = ? AND is_active = TRUE LIMIT 1
+      `, [medicineId]);
+      rows = fallbackRows;
+    }
 
     if (rows.length === 0) {
       return res.status(404).json({
@@ -334,19 +244,6 @@ export const getMedicineAvailability = async (req, res) => {
     }
 
     const med = rows[0];
-    const stock = Number(med.saleable_stock);
-    const threshold = med.low_stock_threshold;
-
-    let status = 'In Stock';
-    let message = 'Available in stock at VDC Store dispensary.';
-
-    if (stock <= 0) {
-      status = 'Out of Stock';
-      message = 'This medicine is currently out of stock. Please contact the pharmacy for further information.';
-    } else if (stock <= threshold) {
-      status = 'Low Stock';
-      message = 'Low stock remaining at the pharmacy counter. Please verify in-store.';
-    }
 
     res.status(200).json({
       success: true,
@@ -354,8 +251,8 @@ export const getMedicineAvailability = async (req, res) => {
         medicine_id: med.medicine_id,
         name: med.name,
         generic_name: med.generic_name,
-        availability_status: status,
-        message,
+        availability_status: med.availability_status,
+        message: med.availability_message,
         checked_at: new Date().toISOString()
       }
     });

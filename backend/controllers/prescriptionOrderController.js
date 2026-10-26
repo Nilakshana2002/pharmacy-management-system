@@ -331,19 +331,26 @@ export const getPrescriptionOrders = async (req, res) => {
   try {
     await ensurePrescriptionOrdersTable();
 
-    const [rows] = await pool.query(`
-      SELECT 
-        po.*,
-        c.full_name AS registered_full_name,
-        c.email AS registered_email,
-        c.contact_no AS registered_phone,
-        c.nic AS registered_nic,
-        c.address AS registered_address,
-        c.created_at AS registered_member_since
-      FROM prescription_orders po
-      LEFT JOIN customers c ON (po.customer_id = c.customer_id OR LOWER(TRIM(po.your_email)) = LOWER(TRIM(c.email)))
-      ORDER BY po.created_at DESC
-    `);
+    let rows;
+    try {
+      const [vRows] = await pool.query('SELECT * FROM v_prescription_fulfillment_pipeline ORDER BY created_at DESC');
+      rows = vRows;
+    } catch {
+      const [fallbackRows] = await pool.query(`
+        SELECT 
+          po.*,
+          c.full_name AS registered_full_name,
+          c.email AS registered_email,
+          c.contact_no AS registered_phone,
+          c.nic AS registered_nic,
+          c.address AS registered_address,
+          c.created_at AS registered_member_since
+        FROM prescription_orders po
+        LEFT JOIN customers c ON (po.customer_id = c.customer_id OR LOWER(TRIM(po.your_email)) = LOWER(TRIM(c.email)))
+        ORDER BY po.created_at DESC
+      `);
+      rows = fallbackRows;
+    }
 
     const formatted = rows.map(formatOrderRow);
 
@@ -363,27 +370,37 @@ export const getPrescriptionOrders = async (req, res) => {
 
 /**
  * GET /api/prescription-orders/:orderId
- * Get specific prescription order details
+ * Get specific prescription order details using Database View v_prescription_fulfillment_pipeline
  */
 export const getPrescriptionOrderById = async (req, res) => {
   try {
     await ensurePrescriptionOrdersTable();
     const { orderId } = req.params;
 
-    const [rows] = await pool.query(`
-      SELECT 
-        po.*,
-        c.full_name AS registered_full_name,
-        c.email AS registered_email,
-        c.contact_no AS registered_phone,
-        c.nic AS registered_nic,
-        c.address AS registered_address,
-        c.created_at AS registered_member_since
-      FROM prescription_orders po
-      LEFT JOIN customers c ON (po.customer_id = c.customer_id OR LOWER(TRIM(po.your_email)) = LOWER(TRIM(c.email)))
-      WHERE po.order_id = ?
-      LIMIT 1
-    `, [orderId]);
+    let rows;
+    try {
+      const [vRows] = await pool.query(
+        'SELECT * FROM v_prescription_fulfillment_pipeline WHERE order_id = ? LIMIT 1',
+        [orderId]
+      );
+      rows = vRows;
+    } catch {
+      const [fallbackRows] = await pool.query(`
+        SELECT 
+          po.*,
+          c.full_name AS registered_full_name,
+          c.email AS registered_email,
+          c.contact_no AS registered_phone,
+          c.nic AS registered_nic,
+          c.address AS registered_address,
+          c.created_at AS registered_member_since
+        FROM prescription_orders po
+        LEFT JOIN customers c ON (po.customer_id = c.customer_id OR LOWER(TRIM(po.your_email)) = LOWER(TRIM(c.email)))
+        WHERE po.order_id = ?
+        LIMIT 1
+      `, [orderId]);
+      rows = fallbackRows;
+    }
 
     if (rows.length === 0) {
       return res.status(404).json({
