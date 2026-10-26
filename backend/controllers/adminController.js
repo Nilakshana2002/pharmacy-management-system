@@ -2547,9 +2547,10 @@ export const deleteCustomer = async (req, res) => {
 export const getInquiries = async (req, res) => {
   try {
     await ensureSalesTables();
+    const { status } = req.query || {};
     let whereClause = '';
     const params = [];
-    if (status) {
+    if (status && status !== 'ALL') {
       whereClause = ' WHERE status = ?';
       params.push(status);
     }
