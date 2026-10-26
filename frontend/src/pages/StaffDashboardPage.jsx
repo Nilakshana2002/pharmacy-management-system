@@ -349,6 +349,8 @@ export default function StaffDashboardPage({ staffUser, onLogout, onBrowseWebsit
   useEffect(() => {
     if (activeTab === 'reports') {
       loadDashboardData();
+    } else if (activeTab === 'inquiries') {
+      fetchInquiries();
     }
   }, [activeTab]);
 
