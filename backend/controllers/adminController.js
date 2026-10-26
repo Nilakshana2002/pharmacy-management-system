@@ -39,6 +39,9 @@ export const ensureSalesTables = async () => {
  */
 export const syncOrphanedPosMovements = async () => {
   try {
+    // 1. Clean up any phantom duplicate sales created with prefix 'INV-POS-%'
+    await pool.query("DELETE FROM sales WHERE invoice_number LIKE 'INV-POS-%'");
+
     const [orphanRows] = await pool.query(`
       SELECT 
         sm.movement_id,
@@ -60,7 +63,19 @@ export const syncOrphanedPosMovements = async () => {
     `);
 
     for (const mov of orphanRows) {
-      const invNum = `INV-POS-${mov.movement_id}`;
+      const reasonStr = mov.reason || '';
+
+      // Check if this stock movement already references an existing valid sale invoice
+      const matchInv = reasonStr.match(/INV-[\w-]+/i);
+      if (matchInv && matchInv[0]) {
+        const [existingReal] = await pool.query('SELECT sale_id FROM sales WHERE invoice_number = ? LIMIT 1', [matchInv[0]]);
+        if (existingReal.length > 0) {
+          // Sale already recorded properly in database. Never create duplicate!
+          continue;
+        }
+      }
+
+      const invNum = `INV-REC-${mov.movement_id}`;
       const [existing] = await pool.query('SELECT sale_id FROM sales WHERE invoice_number = ? LIMIT 1', [invNum]);
       if (existing.length > 0) continue;
 
