@@ -7,50 +7,7 @@ let inquiriesTableChecked = false;
  * Inquiries and notification_logs tables are managed via database/schema.sql
  */
 export async function ensureInquiriesTable() {
-  if (inquiriesTableChecked) return;
-  inquiriesTableChecked = true;
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS inquiries (
-        inquiry_id INT AUTO_INCREMENT PRIMARY KEY,
-        reference_code VARCHAR(50) NOT NULL UNIQUE,
-        customer_id INT NULL,
-        name VARCHAR(150) NOT NULL,
-        phone VARCHAR(50),
-        email VARCHAR(150),
-        medicine_query VARCHAR(200),
-        message TEXT NOT NULL,
-        status ENUM('NEW', 'IN_REVIEW', 'RESOLVED') NOT NULL DEFAULT 'NEW',
-        staff_notes TEXT NULL,
-        responded_by VARCHAR(100) NULL,
-        responded_at DATETIME NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_inquiries_ref (reference_code),
-        INDEX idx_inquiries_status (status)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS notification_logs (
-        notification_id INT AUTO_INCREMENT PRIMARY KEY,
-        order_id VARCHAR(50) NULL,
-        customer_id INT NULL,
-        recipient_email VARCHAR(150) NOT NULL,
-        recipient_name VARCHAR(150),
-        subject VARCHAR(255) NOT NULL,
-        message_body TEXT NOT NULL,
-        notification_type ENUM('PRESCRIPTION_ACCEPTED', 'PRESCRIPTION_REJECTED', 'PRESCRIPTION_RECEIVED', 'INQUIRY_RECEIVED', 'PROMOTIONAL', 'SYSTEM') DEFAULT 'SYSTEM',
-        status ENUM('SENT', 'FAILED', 'PENDING') DEFAULT 'SENT',
-        error_message TEXT NULL,
-        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_notif_order (order_id),
-        INDEX idx_notif_status (status)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-  } catch (err) {
-    console.warn('[Ensure Inquiries Table Notice]:', err.message);
-  }
+  return true;
 }
 
 /**
@@ -59,7 +16,6 @@ export async function ensureInquiriesTable() {
  */
 export const createInquiry = async (req, res) => {
   try {
-    await ensureInquiriesTable();
     const {
       name,
       phone,
@@ -150,27 +106,27 @@ export const createInquiry = async (req, res) => {
  */
 export const getInquiryByRef = async (req, res) => {
   try {
-    await ensureInquiriesTable();
     const { ref } = req.params;
 
-    const [rows] = await pool.query(`
-      SELECT 
-        inquiry_id,
-        reference_code,
-        name,
-        email,
-        phone,
-        medicine_query,
-        message,
-        status,
-        staff_notes,
-        responded_by,
-        responded_at,
-        created_at
-      FROM inquiries
-      WHERE UPPER(reference_code) = ?
-      LIMIT 1
-    `, [ref.trim().toUpperCase()]);
+    let rows;
+    try {
+      const [viewRows] = await pool.query(
+        'SELECT * FROM v_inquiries_extended WHERE UPPER(reference_code) = ? LIMIT 1',
+        [ref.trim().toUpperCase()]
+      );
+      rows = viewRows;
+    } catch {
+      const [fallbackRows] = await pool.query(`
+        SELECT 
+          inquiry_id, reference_code, name, email, phone,
+          medicine_query, message, status, staff_notes,
+          responded_by, responded_at, created_at
+        FROM inquiries
+        WHERE UPPER(reference_code) = ?
+        LIMIT 1
+      `, [ref.trim().toUpperCase()]);
+      rows = fallbackRows;
+    }
 
     if (rows.length === 0) {
       return res.status(404).json({

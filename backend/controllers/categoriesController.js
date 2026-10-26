@@ -6,37 +6,40 @@ import pool from '../config/db.js';
  */
 export const getCategories = async (req, res) => {
   try {
-    // Check available columns in medicine_categories
-    const [cols] = await pool.query('SHOW COLUMNS FROM medicine_categories');
-    const colNames = cols.map(c => c.Field);
-    const hasImageCol = colNames.includes('image_url');
-    const hasParentCol = colNames.includes('parent_category_id');
-
-    const sql = `
-      SELECT 
-        c.category_id,
-        c.category_name,
-        c.description,
-        c.icon_name,
-        ${hasImageCol ? 'c.image_url,' : ''}
-        ${hasParentCol ? 'c.parent_category_id, p.category_name AS parent_category_name,' : ''}
-        COUNT(m.medicine_id) AS medicine_count
-      FROM medicine_categories c
-      ${hasParentCol ? 'LEFT JOIN medicine_categories p ON c.parent_category_id = p.category_id' : ''}
-      LEFT JOIN medicines m ON c.category_id = m.category_id AND m.is_active = TRUE
-      GROUP BY 
-        c.category_id, 
-        c.category_name, 
-        c.description, 
-        c.icon_name
-        ${hasImageCol ? ', c.image_url' : ''}
-        ${hasParentCol ? ', c.parent_category_id, p.category_name' : ''}
-      ORDER BY 
-        ${hasParentCol ? 'COALESCE(c.parent_category_id, c.category_id), c.parent_category_id IS NOT NULL, ' : ''}
-        c.category_name ASC
-    `;
-
-    const [rows] = await pool.query(sql);
+    let rows;
+    try {
+      const [viewRows] = await pool.query('SELECT * FROM v_categories_summary');
+      rows = viewRows;
+    } catch {
+      // Fallback query if view not yet created
+      const [fallbackRows] = await pool.query(`
+        SELECT 
+          c.category_id,
+          c.category_name,
+          c.description,
+          c.icon_name,
+          c.image_url,
+          c.parent_category_id,
+          p.category_name AS parent_category_name,
+          COUNT(m.medicine_id) AS medicine_count
+        FROM medicine_categories c
+        LEFT JOIN medicine_categories p ON c.parent_category_id = p.category_id
+        LEFT JOIN medicines m ON c.category_id = m.category_id AND m.is_active = TRUE
+        GROUP BY 
+          c.category_id, 
+          c.category_name, 
+          c.description, 
+          c.icon_name,
+          c.image_url,
+          c.parent_category_id,
+          p.category_name
+        ORDER BY 
+          COALESCE(c.parent_category_id, c.category_id),
+          c.parent_category_id IS NOT NULL,
+          c.category_name ASC
+      `);
+      rows = fallbackRows;
+    }
 
     res.status(200).json({
       success: true,

@@ -125,6 +125,27 @@ export const registerCustomer = async (req, res) => {
       }
     }
 
+    // Validate Sri Lankan NIC format using ADBMS Stored Function
+    if (nic && nic.trim()) {
+      try {
+        const [nicRes] = await pool.query('SELECT fn_validate_nic_format(?) AS is_valid', [nic.trim()]);
+        if (nicRes[0] && nicRes[0].is_valid === 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid Sri Lankan NIC format. Must be 9 digits followed by V/X (e.g. 942150821V) or 12 digits (e.g. 199421500821).'
+          });
+        }
+      } catch (nicErr) {
+        const nicPattern = /^[0-9]{9}[vVxX]$|^[0-9]{12}$/;
+        if (!nicPattern.test(nic.trim())) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid Sri Lankan NIC format. Must be 9 digits followed by V/X or 12 digits.'
+          });
+        }
+      }
+    }
+
     // Check if email already registered
     const [existing] = await pool.query('SELECT customer_id FROM customers WHERE email = ?', [trimmedEmail]);
     if (existing.length > 0) {
@@ -396,34 +417,26 @@ export const getCustomerPrescriptions = async (req, res) => {
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, JWT_SECRET);
 
-    // Retrieve by customer_id or matching email
-    const [rows] = await pool.query(`
-      SELECT 
-        po.order_id,
-        po.account_type,
-        po.customer_id,
-        po.your_name,
-        po.your_email,
-        po.patient_name,
-        po.patient_age,
-        po.contact_no,
-        po.delivery_option,
-        po.files_count,
-        po.files,
-        po.message,
-        po.status,
-        po.pharmacist_name,
-        po.reviewed_at,
-        po.confirmation_message,
-        po.rejection_reason,
-        po.ready_time,
-        po.email_sent,
-        po.email_sent_at,
-        po.created_at
-      FROM prescription_orders po
-      WHERE po.customer_id = ? OR LOWER(TRIM(po.your_email)) = LOWER(TRIM(?))
-      ORDER BY po.created_at DESC
-    `, [decoded.customerId, decoded.email]);
+    // Retrieve by customer_id or matching email using Database View v_prescription_fulfillment_pipeline
+    let rows;
+    try {
+      const [viewRows] = await pool.query(`
+        SELECT * FROM v_prescription_fulfillment_pipeline
+        WHERE customer_id = ? OR LOWER(TRIM(your_email)) = LOWER(TRIM(?))
+        ORDER BY created_at DESC
+      `, [decoded.customerId, decoded.email]);
+      rows = viewRows;
+    } catch {
+      const [fallbackRows] = await pool.query(`
+        SELECT 
+          po.*,
+          TIMESTAMPDIFF(MINUTE, po.created_at, COALESCE(po.reviewed_at, NOW())) AS processing_minutes
+        FROM prescription_orders po
+        WHERE po.customer_id = ? OR LOWER(TRIM(po.your_email)) = LOWER(TRIM(?))
+        ORDER BY po.created_at DESC
+      `, [decoded.customerId, decoded.email]);
+      rows = fallbackRows;
+    }
 
     // Parse files safely for each order
     const formattedOrders = rows.map((row) => {
@@ -539,45 +552,63 @@ export const getCustomerOrders = async (req, res) => {
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, JWT_SECRET);
 
-    const [sales] = await pool.query(`
-      SELECT 
-        s.sale_id,
-        s.invoice_number,
-        s.sale_date,
-        s.total_amount,
-        s.discount_amount,
-        s.net_amount,
-        s.payment_method,
-        s.payment_status
-      FROM sales s
-      WHERE s.customer_id = ?
-      ORDER BY s.sale_date DESC
-      LIMIT 50
-    `, [decoded.customerId]);
-
-    // Fetch items for each sale
-    const ordersWithItems = await Promise.all(sales.map(async (sale) => {
-      const [items] = await pool.query(`
+    let rows;
+    try {
+      const [viewRows] = await pool.query(`
+        SELECT * FROM v_customer_purchase_history
+        WHERE customer_id = ?
+        ORDER BY sale_date DESC
+      `, [decoded.customerId]);
+      rows = viewRows;
+    } catch {
+      const [fallbackRows] = await pool.query(`
         SELECT 
-          si.sale_item_id,
-          si.quantity,
-          si.unit_price,
-          si.subtotal,
-          m.name AS medicine_name,
-          m.generic_name,
-          m.dosage_form,
-          m.strength,
-          m.image_url
-        FROM sale_items si
-        LEFT JOIN medicines m ON si.medicine_id = m.medicine_id
-        WHERE si.sale_id = ?
-      `, [sale.sale_id]);
+          c.customer_id, s.sale_id, s.invoice_number, s.sale_date,
+          s.total_amount, s.discount_amount, s.net_amount, s.payment_method, s.payment_status,
+          si.sale_item_id, m.medicine_id, m.name AS medicine_name, m.generic_name,
+          m.dosage_form, m.strength, m.image_url, si.quantity, si.unit_price, si.subtotal
+        FROM customers c
+        INNER JOIN sales s ON c.customer_id = s.customer_id
+        INNER JOIN sale_items si ON s.sale_id = si.sale_id
+        INNER JOIN medicines m ON si.medicine_id = m.medicine_id
+        WHERE c.customer_id = ?
+        ORDER BY s.sale_date DESC
+      `, [decoded.customerId]);
+      rows = fallbackRows;
+    }
 
-      return {
-        ...sale,
-        items
-      };
-    }));
+    // Group items into sales objects matching exact frontend shape
+    const ordersMap = new Map();
+    for (const r of rows) {
+      if (!ordersMap.has(r.sale_id)) {
+        ordersMap.set(r.sale_id, {
+          sale_id: r.sale_id,
+          invoice_number: r.invoice_number,
+          sale_date: r.sale_date,
+          total_amount: r.total_amount,
+          discount_amount: r.discount_amount,
+          net_amount: r.net_amount,
+          payment_method: r.payment_method,
+          payment_status: r.payment_status,
+          items: []
+        });
+      }
+      if (r.sale_item_id) {
+        ordersMap.get(r.sale_id).items.push({
+          sale_item_id: r.sale_item_id,
+          quantity: r.quantity,
+          unit_price: r.unit_price,
+          subtotal: r.subtotal,
+          medicine_name: r.medicine_name,
+          generic_name: r.generic_name,
+          dosage_form: r.dosage_form,
+          strength: r.strength,
+          image_url: r.image_url
+        });
+      }
+    }
+
+    const ordersWithItems = Array.from(ordersMap.values());
 
     res.status(200).json({
       success: true,

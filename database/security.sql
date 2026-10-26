@@ -85,6 +85,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.inquiries TO 'pharmacy_app'@
 GRANT SELECT, INSERT, UPDATE, DELETE ON pharmacy_db.notification_logs TO 'pharmacy_app'@'localhost';
 
 -- Grant Stored Routine Execution (Stored Procedures & Functions)
+GRANT EXECUTE ON pharmacy_db.* TO 'pharmacy_app'@'localhost';
 GRANT EXECUTE ON PROCEDURE pharmacy_db.sp_create_pos_sale TO 'pharmacy_app'@'localhost';
 GRANT EXECUTE ON PROCEDURE pharmacy_db.sp_update_batch_stock TO 'pharmacy_app'@'localhost';
 GRANT EXECUTE ON PROCEDURE pharmacy_db.sp_receive_new_batch TO 'pharmacy_app'@'localhost';
