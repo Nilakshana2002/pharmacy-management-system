@@ -213,16 +213,6 @@ export default function StaffLoginPage({ onLoginSuccess, setActivePage }) {
               <span>Admin</span>
             </button>
           </div>
-          <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70 text-[11px] text-slate-500 space-y-1 font-mono">
-            <div className="flex justify-between">
-              <span>Admin: <strong className="text-slate-800">admin</strong></span>
-              <span className="text-teal-700 font-bold">admin123</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Staff: <strong className="text-slate-800">pharmacist</strong></span>
-              <span className="text-teal-700 font-bold">pharma123</span>
-            </div>
-          </div>
         </div>
 
       </div>
